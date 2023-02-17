@@ -4,10 +4,30 @@ plugins {
 
 apply plugin: 'eclipse'
 
+sourceCompatibility = '1.15'
+targetCompatibility = '1.15'
+
+compileJava {
+	doFirst {
+		sourceCompatibility = '1.8'
+		targetCompatibility = '1.8'
+	}
+}
+
 repositories {
     mavenCentral()
 }
 
 dependencies {
 	implementation project(':Fluid')
+	
+	implementation group: 'com.google.code.gson', name: 'gson', version: '2.10.1'
+}
+
+jar {
+    manifest {
+        attributes(
+            "Main-Class": "org.asf.lightray.Main"
+        )
+    }
 }
