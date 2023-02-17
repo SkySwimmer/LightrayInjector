@@ -1,0 +1,13 @@
+plugins {
+	id 'java'
+}
+
+apply plugin: 'eclipse'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+	implementation project(':Fluid')
+}
