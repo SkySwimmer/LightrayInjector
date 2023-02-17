@@ -1,8 +1,10 @@
 plugins {
 	id 'java'
+	id "com.github.johnrengelman.shadow" version "7.0.0"
 }
 
 apply plugin: 'eclipse'
+apply plugin: "com.github.johnrengelman.shadow"
 
 sourceCompatibility = '1.15'
 targetCompatibility = '1.15'
@@ -38,4 +40,15 @@ jar {
             "Main-Class": "org.asf.lightray.Main"
         )
     }
+}
+
+task sourcesJar(type: Jar, dependsOn: classes) {
+	classifier = 'sources'
+	from sourceSets.main.allSource
+	exclude "**/extra/**"
+}
+
+artifacts {
+	archives sourcesJar
+	archives shadowJar
 }
