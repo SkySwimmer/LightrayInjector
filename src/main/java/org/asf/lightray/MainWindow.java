@@ -249,15 +249,18 @@ public class MainWindow {
 						ProgressWindow.WindowLogger.log("Done.");
 
 						// Download dex2jar
-						ProgressWindow.WindowLogger.log("");
-						ProgressWindow.WindowLogger
-								.log("Downloading dex2jar... (note this package is owned by pxb1988)");
-						ProgressWindow.WindowLogger.setLabel("Downloading dex2jar...");
-						downloadFile("lightray-work/dex2jar.zip", dex2jarDownload);
-						ProgressWindow.WindowLogger.log("Extracting dex2jar...");
-						extractFile("lightray-work/dex2jar.zip", "lightray-work");
-						ProgressWindow.WindowLogger.log("Moving dex2jar...");
-						new File("lightray-work/" + dex2jarInnerFolder).renameTo(new File("lightray-work/dex2jar"));
+						if (!new File("dex2jar/complete").exists()) {
+							ProgressWindow.WindowLogger.log("");
+							ProgressWindow.WindowLogger
+									.log("Downloading dex2jar... (note this package is owned by pxb1988)");
+							ProgressWindow.WindowLogger.setLabel("Downloading dex2jar...");
+							downloadFile("lightray-work/dex2jar.zip", dex2jarDownload);
+							ProgressWindow.WindowLogger.log("Extracting dex2jar...");
+							extractFile("lightray-work/dex2jar.zip", "lightray-work");
+							ProgressWindow.WindowLogger.log("Moving dex2jar...");
+							new File("lightray-work/" + dex2jarInnerFolder).renameTo(new File("dex2jar"));
+							new File("dex2jar/complete").createNewFile();
+						}
 
 						// Download build tools
 						if (!new File("buildtools/complete").exists()) {
@@ -361,10 +364,20 @@ public class MainWindow {
 								if (ent.isDirectory()) {
 									out.mkdirs();
 								} else {
-									out.getParentFile().mkdirs();
-									FileOutputStream strm = new FileOutputStream(out);
-									archive.getInputStream(ent).transferTo(strm);
-									strm.close();
+									if (ent.getName().endsWith(".class")) {
+										// Copy file
+										File outp = new File("lightray-work/classes/" + ent.getName());
+										outp.getParentFile().mkdirs();
+										FileOutputStream strm = new FileOutputStream(outp);
+										archive.getInputStream(ent).transferTo(strm);
+										strm.close();
+										modFiles.remove(ent.getName());
+									} else {
+										out.getParentFile().mkdirs();
+										FileOutputStream strm = new FileOutputStream(out);
+										archive.getInputStream(ent).transferTo(strm);
+										strm.close();
+									}
 								}
 								if (ents.hasMoreElements())
 									ent = ents.nextElement();
@@ -384,9 +397,8 @@ public class MainWindow {
 								// Check classes
 								for (ClassNode node : pool.getLoadedClasses()) {
 									if (AnnotationInfo.isAnnotationPresent(FluidTransformer.class, node)) {
-										new File("lightray-work/mods/" + node.name + ".class").delete();
+										new File("lightray-work/classes/" + node.name + ".class").delete();
 										ProgressWindow.WindowLogger.log("  Removed " + node.name + ".class");
-										modFiles.remove(node.name + ".class");
 									}
 								}
 							}
@@ -422,8 +434,9 @@ public class MainWindow {
 							arr.add(resource);
 							ProgressWindow.WindowLogger.log("  Indexed " + resource);
 						}
-						modFiles.add("lightray-resources.json");
-						Files.writeString(Path.of("lightray-work/mods/lightray-resources.json"), arr.toString());
+						modFiles.add("assets/lightray-resources.json");
+						new File("lightray-work/mods/assets").mkdirs();
+						Files.writeString(Path.of("lightray-work/mods/assets/lightray-resources.json"), arr.toString());
 						ProgressWindow.WindowLogger.log("Done.");
 
 						// Init FLUID
@@ -456,7 +469,9 @@ public class MainWindow {
 						ProgressWindow.WindowLogger.setValue(0);
 						Enumeration<? extends ZipEntry> ents = archive.entries();
 						ZipEntry ent = ents.nextElement();
+						ArrayList<String> existingEntries = new ArrayList<String>();
 						while (ent != null) {
+							existingEntries.add(ent.getName());
 							ProgressWindow.WindowLogger.log("  Updating " + ent.getName());
 							zipO.putNextEntry(ent);
 							InputStream entStrm = archive.getInputStream(ent);
@@ -482,12 +497,12 @@ public class MainWindow {
 									// Scan libs
 									String jvm = ProcessHandle.current().info().command().get();
 									String libs = "";
-									for (File lib : new File("lightray-work/dex2jar/lib")
+									for (File lib : new File("dex2jar/lib")
 											.listFiles(t -> t.getName().endsWith(".jar"))) {
 										if (libs.isEmpty())
-											libs = "dex2jar/lib/" + lib.getName();
+											libs = "../dex2jar/lib/" + lib.getName();
 										else
-											libs += File.pathSeparator + "dex2jar/lib/" + lib.getName();
+											libs += File.pathSeparator + "../dex2jar/lib/" + lib.getName();
 									}
 									ProcessBuilder builder = new ProcessBuilder(jvm, "-cp", libs,
 											"com.googlecode.dex2jar.tools.Dex2jarCmd", ent.getName());
@@ -514,15 +529,18 @@ public class MainWindow {
 									Enumeration<? extends ZipEntry> ents2 = archive2.entries();
 									ZipEntry ent2 = ents2.nextElement();
 									while (ent2 != null) {
-										ProgressWindow.WindowLogger.log("      Extracting " + ent2.getName());
 										File out = new File("lightray-work/" + fName, ent2.getName());
-										if (ent2.isDirectory()) {
-											out.mkdirs();
-										} else {
-											out.getParentFile().mkdirs();
-											FileOutputStream strm = new FileOutputStream(out);
-											archive2.getInputStream(ent2).transferTo(strm);
-											strm.close();
+										if (!out.exists()) { // Check if it exists, if it does its a patcher overriding
+																// it
+											ProgressWindow.WindowLogger.log("      Extracting " + ent2.getName());
+											if (ent2.isDirectory()) {
+												out.mkdirs();
+											} else {
+												out.getParentFile().mkdirs();
+												FileOutputStream strm = new FileOutputStream(out);
+												archive2.getInputStream(ent2).transferTo(strm);
+												strm.close();
+											}
 										}
 										if (ents2.hasMoreElements())
 											ent2 = ents2.nextElement();
@@ -588,6 +606,11 @@ public class MainWindow {
 						// Add other files
 						ProgressWindow.WindowLogger.log("Adding remaining files...");
 						for (String file : new ArrayList<String>(modFiles)) {
+							if (existingEntries.contains(file) || file.endsWith("/")) {
+								ProgressWindow.WindowLogger.increaseProgress();
+								continue;// Skip
+							}
+							existingEntries.add(file);
 							ent = new ZipEntry(file);
 							ProgressWindow.WindowLogger.log("  Updating " + ent.getName());
 							zipO.putNextEntry(ent);
