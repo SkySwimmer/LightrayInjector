@@ -19,7 +19,7 @@ import org.asf.cyan.fluid.bytecode.enums.ComparisonMethod;
  * @author Stefan0436 - AerialWorks Software Foundation
  *
  */
-public class FileClassSourceProvider implements IClassSourceProvider<String> {
+public class FileClassSourceProvider implements IClassSourceProvider<File> {
 
 	private File file;
 
@@ -37,8 +37,8 @@ public class FileClassSourceProvider implements IClassSourceProvider<String> {
 	}
 
 	@Override
-	public String providerObject() {
-		return file.getAbsolutePath();
+	public File providerObject() {
+		return file;
 	}
 
 	@Override

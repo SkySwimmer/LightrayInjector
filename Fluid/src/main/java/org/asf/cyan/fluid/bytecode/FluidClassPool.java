@@ -4,6 +4,7 @@ import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -64,8 +65,17 @@ public class FluidClassPool implements Closeable {
 	 * Gets the URL source providers as URLs.
 	 */
 	public URL[] getURLSources() {
-		return sources.stream().filter(t -> t.providerObject() instanceof URL).map(t -> (URL) t.providerObject())
-				.toArray(t -> new URL[t]);
+		return sources.stream().filter(t -> t.providerObject() instanceof URL || t.providerObject() instanceof File)
+				.map(t -> {
+					Object o = t.providerObject();
+					if (o instanceof File)
+						try {
+							return ((File) o).toURI().toURL();
+						} catch (MalformedURLException e) {
+							return null;
+						}
+					return (URL) o;
+				}).filter(t -> t != null).toArray(t -> new URL[t]);
 	}
 
 	/**

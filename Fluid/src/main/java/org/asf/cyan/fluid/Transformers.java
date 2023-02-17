@@ -1,5 +1,6 @@
 package org.asf.cyan.fluid;
 
+import java.io.File;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -94,6 +95,15 @@ public class Transformers {
 	 * @param source Source URL
 	 */
 	public static void addClassSource(URL source) {
+		pool.addSource(source);
+	}
+
+	/**
+	 * Add source files, can be a jar or class folder
+	 * 
+	 * @param source Source file
+	 */
+	public static void addClassSource(File source) {
 		pool.addSource(source);
 	}
 

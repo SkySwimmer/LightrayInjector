@@ -331,8 +331,15 @@ public class MainWindow {
 							}
 						}
 
-						// Load modifications
+						// Load libraries
+						File libsDir = new File("libs");
+						libsDir.mkdirs();
 						FluidClassPool pool = FluidClassPool.create();
+						ProgressWindow.WindowLogger.log("Loading libraries...");
+						ProgressWindow.WindowLogger.setLabel("Loading libraries...");
+						loadLibs(libsDir, pool);
+
+						// Load modifications
 						ProgressWindow.WindowLogger.setMax(max);
 						ProgressWindow.WindowLogger.setValue(0);
 						ProgressWindow.WindowLogger.log("Loading modifications...");
@@ -370,6 +377,7 @@ public class MainWindow {
 							if (entry.type == PatchEntryType.TRANSFORMER) {
 								ProgressWindow.WindowLogger.log("Cleaning transformer files from " + entry.name);
 								ZipInputStream strm = new ZipInputStream(new FileInputStream(mod));
+								pool.addSource(mod);
 								pool.importArchive(strm);
 								strm.close();
 
@@ -424,6 +432,9 @@ public class MainWindow {
 						Fluid.registerAllTransformersFrom(pool);
 						Fluid.closeFluidLoader();
 						Transformers.initialize();
+						for (URL u : pool.getURLSources()) {
+							Transformers.addClassSource(u);
+						}
 						ProgressWindow.WindowLogger.log("Done.");
 
 						// Apply modifications
@@ -523,6 +534,9 @@ public class MainWindow {
 									ProgressWindow.WindowLogger.setLabel("    Patching classes...");
 
 									// Patch classes
+									File jar = new File("lightray-work/" + fName + "-dex2jar.jar");
+									pool.addSource(jar);
+									Transformers.addClassSource(jar);
 									patchClasses(new File("lightray-work/" + fName), "");
 
 									// Re-zip
@@ -834,6 +848,18 @@ public class MainWindow {
 		if (comp instanceof Container) {
 			for (Component c : ((Container) comp).getComponents()) {
 				recurseAddKeyHandler(c);
+			}
+		}
+	}
+
+	private void loadLibs(File libs, FluidClassPool pool) {
+		// Scan folder
+		for (File m : libs.listFiles()) {
+			if (m.isDirectory())
+				loadLibs(m, pool);
+			else if (m.getName().endsWith(".jar") || m.getName().endsWith(".zip")) {
+				pool.addSource(m);
+				ProgressWindow.WindowLogger.log("  Added: " + m.getName());
 			}
 		}
 	}
