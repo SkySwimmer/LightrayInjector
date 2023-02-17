@@ -457,12 +457,13 @@ public class MainWindow {
 									entStrm.close();
 									entStrm = new FileInputStream("lightray-work/mods/" + ent.getName());
 									modFiles.remove(ent.getName());
-								} else if (ent.getName().equals("classes.dex")) {
+								} else if (ent.getName().endsWith(".dex")) {
 									// Edit classes
 									ProgressWindow.WindowLogger.log("  Processing classes...");
 									ProgressWindow.WindowLogger.setLabel("Processing classes...");
 									ProgressWindow.WindowLogger.log("    Running dex2jar...");
-									FileOutputStream strmO = new FileOutputStream("lightray-work/classes.dex");
+									FileOutputStream strmO = new FileOutputStream("lightray-work/" + ent.getName());
+									String fName = ent.getName().substring(0, ent.getName().lastIndexOf(".dex"));
 									entStrm.transferTo(strmO);
 									strmO.close();
 									entStrm.close();
@@ -478,7 +479,7 @@ public class MainWindow {
 											libs += File.pathSeparator + "dex2jar/lib/" + lib.getName();
 									}
 									ProcessBuilder builder = new ProcessBuilder(jvm, "-cp", libs,
-											"com.googlecode.dex2jar.tools.Dex2jarCmd", "classes.dex");
+											"com.googlecode.dex2jar.tools.Dex2jarCmd", ent.getName());
 									builder.directory(new File("lightray-work"));
 									builder.redirectInput(Redirect.PIPE);
 									builder.redirectOutput(Redirect.PIPE);
@@ -497,13 +498,13 @@ public class MainWindow {
 												+ "Try updating your Java installation or try another version of it.\n\n"
 												+ "Exit code: " + proc.exitValue());
 									ProgressWindow.WindowLogger.log("    Extracting classes...");
-									ZipFile archive2 = new ZipFile("lightray-work/classes-dex2jar.jar");
-									new File("lightray-work/classes").mkdirs();
+									ZipFile archive2 = new ZipFile("lightray-work/" + fName + "-dex2jar.jar");
+									new File("lightray-work/" + fName).mkdirs();
 									Enumeration<? extends ZipEntry> ents2 = archive2.entries();
 									ZipEntry ent2 = ents2.nextElement();
 									while (ent2 != null) {
 										ProgressWindow.WindowLogger.log("      Extracting " + ent2.getName());
-										File out = new File("lightray-work/classes", ent2.getName());
+										File out = new File("lightray-work/" + fName, ent2.getName());
 										if (ent2.isDirectory()) {
 											out.mkdirs();
 										} else {
@@ -522,20 +523,20 @@ public class MainWindow {
 									ProgressWindow.WindowLogger.setLabel("    Patching classes...");
 
 									// Patch classes
-									patchClasses(new File("lightray-work/classes"), "");
+									patchClasses(new File("lightray-work/" + fName), "");
 
 									// Re-zip
 									ProgressWindow.WindowLogger.log("    Zipping classes...");
-									FileOutputStream outF = new FileOutputStream("lightray-work/classes.jar");
+									FileOutputStream outF = new FileOutputStream("lightray-work/" + fName + ".jar");
 									ZipOutputStream clJar = new ZipOutputStream(outF);
-									zipAll(new File("lightray-work/classes"), "", clJar);
+									zipAll(new File("lightray-work/" + fName), "", clJar);
 									clJar.close();
 									outF.close();
 
 									// Run jar2dex
 									ProgressWindow.WindowLogger.log("    Running jar2dex...");
 									builder = new ProcessBuilder(jvm, "-cp", libs,
-											"com.googlecode.dex2jar.tools.Jar2Dex", "classes.jar");
+											"com.googlecode.dex2jar.tools.Jar2Dex", fName + ".jar");
 									builder.directory(new File("lightray-work"));
 									builder.redirectInput(Redirect.PIPE);
 									builder.redirectOutput(Redirect.PIPE);
@@ -555,7 +556,7 @@ public class MainWindow {
 												+ "Exit code: " + proc.exitValue());
 
 									// Done
-									entStrm = new FileInputStream("lightray-work/classes-jar2dex.dex");
+									entStrm = new FileInputStream("lightray-work/" + fName + "-jar2dex.dex");
 									ProgressWindow.WindowLogger.setLabel("Creating modified APK...");
 								}
 								entStrm.transferTo(zipO);
