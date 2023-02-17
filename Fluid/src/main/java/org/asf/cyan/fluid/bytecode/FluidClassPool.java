@@ -360,7 +360,13 @@ public class FluidClassPool implements Closeable {
 		return null;
 	}
 
-	byte[] getByteCode(ClassNode node) {
+	/**
+	 * Convert a class to bytecode
+	 * 
+	 * @param node Class node
+	 * @return Byte array
+	 */
+	public byte[] getByteCode(ClassNode node) {
 		ClassWriter writer = new ClassWriter(0);
 		node.accept(writer);
 		return writer.toByteArray();

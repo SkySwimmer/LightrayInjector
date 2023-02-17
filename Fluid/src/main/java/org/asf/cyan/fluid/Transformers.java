@@ -139,7 +139,7 @@ public class Transformers {
 	 * @param hooks             List of class hooks
 	 * @param transformers      Map of transformers
 	 * @param transformerOwners Map of transformer owners
-	 * @return Modified bytecode
+	 * @return Modified bytecode or null if not modified
 	 */
 	public static byte[] applyTransformers(String className, byte[] classfileBuffer, ClassLoader loader,
 			FluidClassPool pool, List<ClassLoadHook> hooks, Map<String, ArrayList<ClassNode>> transformers,
