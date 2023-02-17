@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 
+import org.asf.cyan.fluid.bytecode.FluidClassPool;
 import org.asf.cyan.fluid.bytecode.enums.ComparisonMethod;
 
 /**
@@ -45,8 +46,7 @@ public class LoaderClassSourceProvider implements IClassSourceProvider<ClassLoad
 	}
 
 	@Override
-	public InputStream getBasicStream() {
-		return null;
+	public void importAll(FluidClassPool pool) {
 	}
 
 }

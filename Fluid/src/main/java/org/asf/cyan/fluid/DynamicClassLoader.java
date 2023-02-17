@@ -282,7 +282,7 @@ public class DynamicClassLoader extends URLClassLoader {
 	}
 
 	public Class<?> getLoadedClass(String name) {
-		return CyanClassTracker.loadedClasses.get(name);
+		return FluidClassTracker.loadedClasses.get(name);
 	}
 
 	@Override
@@ -294,8 +294,8 @@ public class DynamicClassLoader extends URLClassLoader {
 		}
 		Class<?> _class = null;
 		try {
-			if (CyanClassTracker.loadedClasses.containsKey(name)) {
-				return CyanClassTracker.loadedClasses.get(name);
+			if (FluidClassTracker.loadedClasses.containsKey(name)) {
+				return FluidClassTracker.loadedClasses.get(name);
 			} else
 				_class = super.findClass(name);
 		} catch (ClassNotFoundException ex) {
@@ -306,8 +306,8 @@ public class DynamicClassLoader extends URLClassLoader {
 				l = ClassLoader.getSystemClassLoader();
 			_class = Class.forName(name, true, l);
 		}
-		if (!CyanClassTracker.loadedClasses.containsKey(name)) {
-			CyanClassTracker.loadedClasses.put(name, _class);
+		if (!FluidClassTracker.loadedClasses.containsKey(name)) {
+			FluidClassTracker.loadedClasses.put(name, _class);
 		}
 		return _class;
 	}
@@ -319,8 +319,8 @@ public class DynamicClassLoader extends URLClassLoader {
 			if (cls != null)
 				return cls;
 		}
-		if (CyanClassTracker.loadedClasses.containsKey(name))
-			return CyanClassTracker.loadedClasses.get(name);
+		if (FluidClassTracker.loadedClasses.containsKey(name))
+			return FluidClassTracker.loadedClasses.get(name);
 		return super.loadClass(name);
 	}
 
@@ -331,8 +331,8 @@ public class DynamicClassLoader extends URLClassLoader {
 			if (cls != null)
 				return cls;
 		}
-		if (CyanClassTracker.loadedClasses.containsKey(name))
-			return CyanClassTracker.loadedClasses.get(name);
+		if (FluidClassTracker.loadedClasses.containsKey(name))
+			return FluidClassTracker.loadedClasses.get(name);
 
 		Class<?> cl = null;
 		try {
@@ -346,8 +346,8 @@ public class DynamicClassLoader extends URLClassLoader {
 			cl = l.loadClass(name);
 		}
 
-		if (!CyanClassTracker.loadedClasses.containsKey(name)) {
-			CyanClassTracker.loadedClasses.put(name, cl);
+		if (!FluidClassTracker.loadedClasses.containsKey(name)) {
+			FluidClassTracker.loadedClasses.put(name, cl);
 		}
 		return cl;
 	}

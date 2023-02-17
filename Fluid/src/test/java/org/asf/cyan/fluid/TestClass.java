@@ -6,4 +6,17 @@ public class TestClass {
 		System.out.println("Hello world!");
 	}
 
+	public boolean test1() {
+		return false;
+	}
+
+	public String test2() {
+		String str = "vanilla";
+		return str;
+	}
+
+	public String test3() {
+		return "vanilla";
+	}
+
 }

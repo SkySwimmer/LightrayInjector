@@ -299,7 +299,7 @@ public class FluidBytecodeExporter extends BytecodeExporter {
 
 		String annotations = mthAnnotationHeadToString(method);
 		if (!annotationHead.toString().isEmpty() && !annotations.isEmpty())
-			annotationHead.append("\n\n");
+			annotationHead.append("\n");
 
 		annotationHead.append(annotations);
 

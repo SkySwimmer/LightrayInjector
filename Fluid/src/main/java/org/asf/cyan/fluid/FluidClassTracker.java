@@ -5,22 +5,15 @@ import java.util.HashMap;
 
 /**
  * 
- * Formerly-mixin class tracker for Cyan, allows for finding loaded classes
- * (previously based on Mixin, now not anymore)
+ * Class tracker for Fluid, allows for finding loaded classes
  * 
  * @author Stefan0436 - AerialWorks Software Foundation
  *
  */
-public class CyanClassTracker {
+public class FluidClassTracker {
 
 	static final ArrayList<String> invalidClasses = new ArrayList<String>();
 	static final HashMap<String, Class<?>> loadedClasses = new HashMap<String, Class<?>>();
-
-	public static void registerInvalidClass(String className) {
-		synchronized (invalidClasses) {
-			invalidClasses.add(className);
-		}
-	}
 
 	public static void registerClass(Class<?> cls) {
 		synchronized (loadedClasses) {

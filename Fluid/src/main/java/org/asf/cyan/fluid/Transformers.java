@@ -144,6 +144,7 @@ public class Transformers {
 	public static byte[] applyTransformers(String className, byte[] classfileBuffer, ClassLoader loader,
 			FluidClassPool pool, List<ClassLoadHook> hooks, Map<String, ArrayList<ClassNode>> transformers,
 			Map<String, String> transformerOwners) {
+		String classNameF = className.replaceAll("\\.", "/");
 		boolean match = false;
 		boolean transformerMatch = false;
 		if (hooks.stream().anyMatch(t -> {
@@ -151,19 +152,19 @@ public class Transformers {
 			if (target.equals("@ANY"))
 				return true;
 
-			return target.equals(className);
+			return target.equals(classNameF);
 		})) {
 			match = true;
 		}
-		if (transformers.keySet().stream().anyMatch(t -> t.equals(className))) {
+		if (transformers.keySet().stream().anyMatch(t -> t.equals(classNameF))) {
 			transformerMatch = true;
 		}
 
 		if (!match && !transformerMatch) {
 			try {
-				pool.rewriteClass(className, classfileBuffer);
+				pool.rewriteClass(classNameF, classfileBuffer);
 			} catch (ClassNotFoundException e) {
-				pool.readClass(className, classfileBuffer);
+				pool.readClass(classNameF, classfileBuffer);
 			}
 			return null;
 		}
@@ -172,9 +173,9 @@ public class Transformers {
 		if (match) {
 			ClassNode cls;
 			try {
-				cls = pool.rewriteClass(className, classfileBuffer);
+				cls = pool.rewriteClass(classNameF, classfileBuffer);
 			} catch (ClassNotFoundException e) {
-				cls = pool.readClass(className, classfileBuffer);
+				cls = pool.readClass(classNameF, classfileBuffer);
 			}
 			ClassNode cc = cls;
 
@@ -182,11 +183,11 @@ public class Transformers {
 				String target = t.getTarget();
 				if (target.equals("@ANY"))
 					return true;
-				return target.equals(className);
+				return target.equals(classNameF);
 			}).forEach(hook -> {
 				try {
 					if (!hook.isSilent())
-						log.debug("Applying hook " + hook.getClass().getTypeName() + " to class " + className);
+						log.debug("Applying hook " + hook.getClass().getTypeName() + " to class " + classNameF);
 
 					hook.apply(cc, pool, loader, classfileBuffer);
 				} catch (ClassNotFoundException e) {
@@ -197,7 +198,7 @@ public class Transformers {
 			bytecode = pool.getByteCode(cc.name);
 		}
 		if (transformerMatch) {
-			String clName = className.replaceAll("/", ".");
+			String clName = classNameF.replaceAll("/", ".");
 			for (Mapping<?> map : Fluid.getMappings()) {
 				boolean found = false;
 				for (Mapping<?> mp : map.mappings) {
@@ -214,33 +215,33 @@ public class Transformers {
 			ClassNode cls = null;
 			if (bytecode != null) {
 				try {
-					cls = pool.rewriteClass(className, bytecode);
+					cls = pool.rewriteClass(classNameF, bytecode);
 				} catch (ClassNotFoundException e) {
-					cls = pool.readClass(className, bytecode);
+					cls = pool.readClass(classNameF, bytecode);
 				}
 			} else {
 				try {
-					cls = pool.rewriteClass(className, classfileBuffer);
+					cls = pool.rewriteClass(classNameF, classfileBuffer);
 				} catch (ClassNotFoundException e) {
-					cls = pool.readClass(className, classfileBuffer);
+					cls = pool.readClass(classNameF, classfileBuffer);
 				}
 			}
 
-			Transformer.transform(cls, transformerOwners, transformers, clName, className, pool,
+			Transformer.transform(cls, transformerOwners, transformers, clName, classNameF, pool,
 					Fluid.getTransformerPool(), loader);
 			bytecode = pool.getByteCode(cls.name);
 		} else {
 			if (bytecode != null) {
 				try {
-					pool.rewriteClass(className, bytecode);
+					pool.rewriteClass(classNameF, bytecode);
 				} catch (ClassNotFoundException e) {
-					pool.readClass(className, bytecode);
+					pool.readClass(classNameF, bytecode);
 				}
 			} else {
 				try {
-					pool.rewriteClass(className, classfileBuffer);
+					pool.rewriteClass(classNameF, classfileBuffer);
 				} catch (ClassNotFoundException e) {
-					pool.readClass(className, classfileBuffer);
+					pool.readClass(classNameF, classfileBuffer);
 				}
 			}
 		}

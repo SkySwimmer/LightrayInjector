@@ -1,14 +1,9 @@
 package org.asf.cyan.fluid.bytecode;
 
-import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Modifier;
-import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -16,15 +11,12 @@ import java.util.Optional;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
-import java.util.zip.ZipOutputStream;
-
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 import org.asf.cyan.fluid.Fluid;
 import org.asf.cyan.fluid.bytecode.enums.ComparisonMethod;
+import org.asf.cyan.fluid.bytecode.sources.FileClassSourceProvider;
 import org.asf.cyan.fluid.bytecode.sources.IClassSourceProvider;
 import org.asf.cyan.fluid.bytecode.sources.LoaderClassSourceProvider;
 import org.asf.cyan.fluid.bytecode.sources.URLClassSourceProvider;
@@ -49,7 +41,6 @@ public class FluidClassPool implements Closeable {
 	 * Main implementation, used to create class pool instances
 	 */
 	protected static FluidClassPool implementation = new FluidClassPool();
-	private static Logger log = LogManager.getLogger("Fluid");
 
 	protected FluidClassPool newInstance() {
 		return new FluidClassPool();
@@ -67,10 +58,6 @@ public class FluidClassPool implements Closeable {
 	private ArrayList<ClassEntry> classes = new ArrayList<ClassEntry>();
 	private HashMap<String, String> classHashes = new HashMap<String, String>();
 
-	private ByteArrayOutputStream topOutput = new ByteArrayOutputStream();
-	private ZipOutputStream output = new ZipOutputStream(topOutput);
-	private ArrayList<String> entries = new ArrayList<String>();
-	private ArrayList<String> excluded = new ArrayList<String>();
 	private ArrayList<String> includedclasses = new ArrayList<String>();
 
 	/**
@@ -125,6 +112,15 @@ public class FluidClassPool implements Closeable {
 	 */
 	public void addSource(URL source) {
 		addSource(new URLClassSourceProvider(source));
+	}
+
+	/**
+	 * Add source files, can be a jar or class folder
+	 * 
+	 * @param source Source file
+	 */
+	public void addSource(File source) {
+		addSource(new FileClassSourceProvider(source));
 	}
 
 	/**
@@ -297,54 +293,6 @@ public class FluidClassPool implements Closeable {
 	}
 
 	/**
-	 * Write a file to the memory stream, so it can be saved to an output archive
-	 * later, duplicate entries are skipped.
-	 * 
-	 * @param path Output path
-	 * @param data Byte array containing the content
-	 * @throws IOException If writing fails
-	 */
-	public void addFile(String path, byte[] data) throws IOException {
-		if (entries.contains(path))
-			return;
-		path = path.replaceAll("//", "/");
-
-		final String pathFinal = path;
-		if (excluded.stream().anyMatch(t -> pathFinal.matches(t)))
-			return;
-
-		ZipEntry entry = new ZipEntry(path);
-		output.putNextEntry(entry);
-		output.write(data);
-		output.closeEntry();
-		entries.add(path);
-	}
-
-	/**
-	 * Write a file to the memory stream, so it can be saved to an output archive
-	 * later, duplicate entries are skipped.
-	 * 
-	 * @param path Output path
-	 * @param strm InputStream to write into the memory archive.
-	 * @throws IOException If writing fails
-	 */
-	public void addFile(String path, InputStream strm) throws IOException {
-		if (entries.contains(path))
-			return;
-		path = path.replaceAll("//", "/");
-
-		final String pathFinal = path;
-		if (excluded.stream().anyMatch(t -> pathFinal.matches(t)))
-			return;
-
-		ZipEntry entry = new ZipEntry(path);
-		output.putNextEntry(entry);
-		strm.transferTo(output);
-		output.closeEntry();
-		entries.add(path);
-	}
-
-	/**
 	 * Convert a class to bytecode
 	 * 
 	 * @param name Class name
@@ -373,32 +321,23 @@ public class FluidClassPool implements Closeable {
 	}
 
 	/**
-	 * Import an archive so that its resources are added to the memory stream,
-	 * please try to use addSource as much as possible, use this if you don't want
-	 * the archive registering as a source.<br/>
-	 * If the archive contains classes, they will be added to the class pool.<br/>
-	 * Duplicate entries are ignored, the first jar will save them.<br/>
+	 * Imports all classes from all source providers
+	 */
+	public void importAllSources() {
+		// Load all sources
+		for (IClassSourceProvider<?> source : sources) {
+			source.importAll(this);
+		}
+	}
+
+	/**
+	 * Imports classes into the pool from an archive, loading all classes of the
+	 * archive
 	 * 
 	 * @param strm Zip input stream
 	 * @throws IOException If importing the archive fails
 	 */
 	public void importArchive(ZipInputStream strm) throws IOException {
-		importArchive(strm, true);
-	}
-
-	/**
-	 * Import an archive so that its resources are added to the memory stream,
-	 * please try to use addSource as much as possible, use this if you don't want
-	 * the archive registering as a source.<br/>
-	 * If the archive contains classes, they will be added to the class pool.<br/>
-	 * Duplicate entries are ignored, the first jar will save them.<br/>
-	 * 
-	 * @param strm        Zip input stream
-	 * @param loadClasses true to load classes that have not been loaded before,
-	 *                    false to add them to the archive without loading
-	 * @throws IOException If importing the archive fails
-	 */
-	public void importArchive(ZipInputStream strm, boolean loadClasses) throws IOException {
 		ZipEntry entry = strm.getNextEntry();
 		while (entry != null) {
 			String path = entry.getName().replace("\\", "/");
@@ -409,13 +348,9 @@ public class FluidClassPool implements Closeable {
 				final String nameFinal = name;
 				if (!this.classes.stream()
 						.anyMatch(t -> t.node.name.equals(nameFinal) || t.firstName.equals(nameFinal))) {
-					if (loadClasses && (includedclasses.size() == 0 || includedclasses.contains(nameFinal)))
+					if (includedclasses.size() == 0 || includedclasses.contains(nameFinal))
 						readClass(name, strm);
-					else
-						addFile(path, strm);
 				}
-			} else {
-				addFile(path, strm);
 			}
 			entry = strm.getNextEntry();
 		}
@@ -439,112 +374,20 @@ public class FluidClassPool implements Closeable {
 		throw new ClassNotFoundException("Could not find class " + name.replaceAll("/", "."));
 	}
 
-	/**
-	 * Exclude an entry so it won't be added to the output stream.
-	 * 
-	 * @param path Entry regex.
-	 */
-	public void excludeEntry(String path) {
-		if (excluded.contains(path))
-			return;
-		path = path.replaceAll("//", "/");
-		excluded.add(path);
-	}
-
-	/**
-	 * Write to the output archive, <b>WARNING: imports all resources of all sources
-	 * and closes the streams afterwards, added files will need to be re-added if
-	 * you want to create another archive.</b>
-	 * 
-	 * @return Output byte array
-	 * @throws IOException If generating the array fails
-	 */
-	public byte[] writeOutputArchive() throws IOException {
-		for (IClassSourceProvider<?> provider : sources) {
-			try {
-				if (Stream.of(provider.getClass().getMethods())
-						.anyMatch(t -> !Modifier.isStatic(t.getModifiers()) && t.getName().equals("isZipLike")
-								&& t.getParameterCount() == 0 && boolean.class.isAssignableFrom(t.getReturnType()))
-						&& (boolean) provider.getClass().getMethod("isZipLike").invoke(provider)) {
-					ZipInputStream strm = new ZipInputStream(provider.getBasicStream());
-					importArchive(strm, false);
-					strm.close();
-				}
-			} catch (SecurityException | IllegalAccessException | IllegalArgumentException | InvocationTargetException
-					| NoSuchMethodException | IOException e) {
-			}
-		}
-
-		for (ClassEntry node : classes) {
-			addFile(node.node.name.replaceAll("\\.", "/") + ".class", getByteCode(node.node));
-		}
-
-		output.close();
-		topOutput.close();
-		byte[] outputarr = topOutput.toByteArray();
-		entries.clear();
-		topOutput = new ByteArrayOutputStream();
-		output = new ZipOutputStream(topOutput);
-		return outputarr;
-	}
-
-	/**
-	 * Transfer the output archive to anoter stream, <b>WARNING: imports all
-	 * resources of all sources and closes the streams afterwards, added files will
-	 * need to be re-added if you want to create another archive.</b>
-	 * 
-	 * @param outputstrm The output stream
-	 * @throws IOException If transferring fails
-	 */
-	public void transferOutputArchive(OutputStream outputstrm) throws IOException {
-		for (IClassSourceProvider<?> provider : sources) {
-			try {
-				if (Stream.of(provider.getClass().getMethods())
-						.anyMatch(t -> !Modifier.isStatic(t.getModifiers()) && t.getName().equals("isZipLike")
-								&& t.getParameterCount() == 0 && boolean.class.isAssignableFrom(t.getReturnType()))
-						&& (boolean) provider.getClass().getMethod("isZipLike").invoke(provider)) {
-					ZipInputStream strm = new ZipInputStream(provider.getBasicStream());
-					importArchive(strm, false);
-					strm.close();
-				}
-			} catch (SecurityException | IllegalAccessException | IllegalArgumentException | InvocationTargetException
-					| NoSuchMethodException | IOException e) {
-			}
-		}
-
-		for (ClassEntry node : classes) {
-			addFile(node.node.name.replaceAll("\\.", "/") + ".class", getByteCode(node.node));
-		}
-
-		output.close();
-		topOutput.close();
-		topOutput.writeTo(outputstrm);
-		entries.clear();
-		topOutput = new ByteArrayOutputStream();
-		output = new ZipOutputStream(topOutput);
-	}
-
 	private void addDefaultCp() {
 		for (String path : System.getProperty("java.class.path").split(File.pathSeparator)) {
 			if (path.equals("."))
 				continue;
 
 			File f = new File(path);
-			try {
-				this.addSource(f.toURI().toURL());
-			} catch (MalformedURLException e) {
-				log.error("Failed to load class path entry " + path, e);
-			}
+			this.addSource(f);
 		}
 	}
 
 	@Override
 	public void close() throws IOException {
-		output.close();
-		topOutput.close();
 		sources.clear();
 		classes.clear();
-		entries.clear();
 	}
 
 	// Re-generates the variable names if they have unusable names

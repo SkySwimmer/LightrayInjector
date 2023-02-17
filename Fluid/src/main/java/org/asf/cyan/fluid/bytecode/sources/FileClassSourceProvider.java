@@ -2,11 +2,14 @@ package org.asf.cyan.fluid.bytecode.sources;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.util.zip.ZipInputStream;
 
+import org.asf.cyan.fluid.bytecode.FluidClassPool;
 import org.asf.cyan.fluid.bytecode.enums.ComparisonMethod;
 
 /**
@@ -46,7 +49,7 @@ public class FileClassSourceProvider implements IClassSourceProvider<String> {
 		} catch (MalformedURLException e1) {
 			return null;
 		}
-		if (url.toString().endsWith(".jar") || url.toString().endsWith(".zip")) {
+		if (isZipLike()) {
 			try {
 				url = new URL("jar:" + url.toString() + "!/" + classType + ".class");
 			} catch (MalformedURLException e) {
@@ -70,11 +73,53 @@ public class FileClassSourceProvider implements IClassSourceProvider<String> {
 	}
 
 	@Override
-	public InputStream getBasicStream() {
-		try {
-			return new FileInputStream(file);
-		} catch (IOException e) {
-			return null;
+	public void importAll(FluidClassPool pool) {
+		if (isZipLike()) {
+			InputStream strm;
+			try {
+				strm = new FileInputStream(file);
+			} catch (FileNotFoundException e1) {
+				return;
+			}
+			try {
+				ZipInputStream zip = new ZipInputStream(strm);
+				try {
+					// Import
+					pool.importArchive(zip);
+				} finally {
+					zip.close();
+				}
+			} catch (Exception e) {
+				// Invalid archive
+			} finally {
+				// Close stream
+				try {
+					strm.close();
+				} catch (IOException e) {
+				}
+			}
+		} else if (file.isDirectory()) {
+			// Scan folder
+			importFromFolder(file, pool, "");
+		}
+	}
+
+	private void importFromFolder(File dir, FluidClassPool pool, String pref) {
+		if (!dir.exists())
+			return;
+		for (File f : dir.listFiles()) {
+			if (f.isDirectory()) {
+				// Import subdirs
+				importFromFolder(f, pool, pref + f.getName() + ".");
+			} else if (f.getName().endsWith(".class")) {
+				// Try import
+				try {
+					InputStream strm = new FileInputStream(f);
+					pool.readClass(pref + f.getName().substring(0, f.getName().lastIndexOf(".class")), strm);
+					strm.close();
+				} catch (IOException e) {
+				}
+			}
 		}
 	}
 

@@ -71,21 +71,23 @@ public class Fluid {
 		 * Retrieves the caller class of the method calling this function.
 		 */
 		public static Class<?> traceCall() {
-			return traceCall(2);
+			return traceCall(0);
 		}
 
 		/**
 		 * Retrieves the caller class of the method calling this function.
 		 * 
-		 * @param componentDepth The amount of CyanComponents needed in the stack before
-		 *                       one is actually returned. (other classes are
-		 *                       immediately returned)
+		 * @param minimumDepth Minimum depths for stack checks
 		 */
-		public static Class<?> traceCall(int componentDepth) {
+		public static Class<?> traceCall(int minimumDepth) {
 			StackTraceElement[] stack = Thread.currentThread().getStackTrace();
 
-			int currentDepth = 0;
+			int depth = 0;
 			for (StackTraceElement element : stack) {
+				if (depth < minimumDepth + 2) {
+					depth++;
+					continue;
+				}
 				try {
 					if (!element.getClassName().equals(Thread.class.getTypeName())
 							&& !element.getClassName().equals(CallTrace.class.getTypeName())) {
@@ -99,37 +101,30 @@ public class Fluid {
 								continue;
 							}
 						}
-
-						if (Fluid.class.isAssignableFrom(cls) && currentDepth != componentDepth) {
-							currentDepth++;
-							continue;
-						} else {
-							return cls;
-						}
+						return cls;
 					}
 				} catch (Throwable e2) {
 				}
+				depth++;
 			}
 
-			return traceCall(1);
+			return null;
 		}
 
 		/**
 		 * Retrieves the caller class simple name of the method calling this function.
 		 */
 		public static String traceCallName() {
-			return traceCall().getSimpleName();
+			return traceCall(1).getSimpleName();
 		}
 
 		/**
 		 * Retrieves the caller class simple name of the method calling this function.
 		 * 
-		 * @param componentDepth The amount of CyanComponents needed in the stack before
-		 *                       one is actually returned. (other classes are
-		 *                       immediately returned)
+		 * @param minimumDepth Minimum depths for stack checks
 		 */
-		public static String traceCallName(int componentDepth) {
-			return traceCall(componentDepth).getSimpleName();
+		public static String traceCallName(int minimumDepth) {
+			return traceCall(minimumDepth + 1).getSimpleName();
 		}
 
 	}
@@ -400,7 +395,7 @@ public class Fluid {
 					.anyMatch(t -> parseDescriptor(t.desc).equals(FluidTransformer.class.getTypeName())))
 				throw new IllegalArgumentException("Transformer does not have the @FluidTransformer annotation, class: "
 						+ transformer.replaceAll("/", "."));
-			loadedTransformers.put(transformer, owner);
+			loadedTransformers.put(transformer.replaceAll("/", "."), owner);
 		} else
 			throw new IllegalStateException(
 					"Cannot register transformers after FLUID has been closed or before it has been opened!");
@@ -1125,5 +1120,32 @@ public class Fluid {
 
 	public static File getDumpDir() {
 		return dumpDir;
+	}
+
+	/**
+	 * Registers all transformers from a class pool
+	 * 
+	 * @param pool Class pool to scan
+	 */
+	public static void registerAllTransformersFrom(FluidClassPool pool) {
+		if (closed || beforeLoad)
+			throw new IllegalStateException(
+					"Cannot register transformers after FLUID has been closed or before it has been opened!");
+
+		// Scan pool
+		for (ClassNode node : pool.getLoadedClasses()) {
+			// Check annotation
+			if (Transformer.AnnotationInfo.isAnnotationPresent(FluidTransformer.class, node)) {
+				// Load it
+				String owner = CallTrace.traceCallName(1);
+				String simpleName = node.name.replaceAll("/", ".");
+				if (simpleName.contains("."))
+					simpleName = simpleName.substring(simpleName.lastIndexOf(".") + 1);
+
+				log.info("Loading transformer " + simpleName + "...");
+				transformerPool.readClass(node.name.replaceAll("/", "."), pool.getByteCode(node.name));
+				loadedTransformers.put(node.name.replaceAll("/", "."), owner);
+			}
+		}
 	}
 }

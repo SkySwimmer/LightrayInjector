@@ -42,7 +42,10 @@ import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 
 /**
+ * 
  * Main FLUID Transforming Engine, called by the agent, can be used manually.
+ * While you can interact with this class manually, we recommend using the
+ * {@link Transformers} class instead.
  * 
  * @author Stefan0436 - AerialWorks Software Foundation
  *

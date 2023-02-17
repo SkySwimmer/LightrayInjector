@@ -2,6 +2,7 @@ package org.asf.cyan.fluid.bytecode.sources;
 
 import java.io.InputStream;
 
+import org.asf.cyan.fluid.bytecode.FluidClassPool;
 import org.asf.cyan.fluid.bytecode.enums.ComparisonMethod;
 
 /**
@@ -35,8 +36,9 @@ public interface IClassSourceProvider<T> {
 	public InputStream getStream(String classType);
 
 	/**
-	 * Gets the basic input stream, barely called, if a boolean method named
-	 * isZipLike() is present and returns true, this is required.
+	 * Used to import all classes
+	 * 
+	 * @param pool Pool to import the classes in
 	 */
-	public InputStream getBasicStream();
+	public void importAll(FluidClassPool pool);
 }
