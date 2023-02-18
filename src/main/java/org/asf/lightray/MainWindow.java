@@ -188,7 +188,7 @@ public class MainWindow {
 				try {
 					ZipFile archive = new ZipFile(textField.getText());
 					boolean isAndroid = archive.getEntry("AndroidManifest.xml") != null;
-					boolean wasModified = archive.getEntry("lightray-resources.json") != null;
+					boolean wasModified = archive.getEntry("assets/lightray-resources.json") != null;
 					archive.close();
 					if (!isAndroid) {
 						JOptionPane.showMessageDialog(frmLightray,
