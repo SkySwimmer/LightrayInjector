@@ -55,7 +55,7 @@ import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
-import java.util.zip.Deflater;
+import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
@@ -457,7 +457,6 @@ public class MainWindow {
 						ProgressWindow.WindowLogger.setLabel("Creating modified APK...");
 						FileOutputStream outp = new FileOutputStream("lightray-work/apks/base.modified.apk");
 						ZipOutputStream zipO = new ZipOutputStream(outp);
-						zipO.setLevel(Deflater.NO_COMPRESSION);
 						ZipFile archive = new ZipFile(textField.getText());
 
 						// Update files
@@ -475,7 +474,6 @@ public class MainWindow {
 						while (ent != null) {
 							existingEntries.add(ent.getName());
 							ProgressWindow.WindowLogger.log("  Updating " + ent.getName());
-							zipO.putNextEntry(new ZipEntry(ent.getName()));
 							InputStream entStrm = archive.getInputStream(ent);
 							if (!ent.isDirectory()) {
 								if (modFiles.contains(ent.getName())) {
@@ -483,6 +481,16 @@ public class MainWindow {
 
 									// Swap streams
 									entStrm.close();
+									ZipEntry newEnt = new ZipEntry(ent.getName());
+									if (ent.getName().equals("resources.arsc")
+											|| ent.getName().equals("/resources.arsc")) {
+										File file = new File("lightray-work/mods/" + ent.getName());
+										newEnt.setMethod(ZipEntry.STORED);
+										newEnt.setCrc(computeCrc(file));
+										newEnt.setSize(file.length());
+										newEnt.setCompressedSize(file.length());
+									}
+									zipO.putNextEntry(newEnt);
 									entStrm = new FileInputStream("lightray-work/mods/" + ent.getName());
 									modFiles.remove(ent.getName());
 								} else if (ent.getName().endsWith(".dex")) {
@@ -590,13 +598,18 @@ public class MainWindow {
 												+ "Exit code: " + proc.exitValue());
 
 									// Done
+									zipO.putNextEntry(new ZipEntry(ent.getName()));
 									entStrm = new FileInputStream("lightray-work/" + fName + "-jar2dex.dex");
 									ProgressWindow.WindowLogger.setLabel("Creating modified APK...");
-								}
+								} else
+									zipO.putNextEntry(ent);
 								entStrm.transferTo(zipO);
 								entStrm.close();
-							} else if (modFiles.contains(ent.getName()))
-								modFiles.remove(ent.getName());
+							} else {
+								zipO.putNextEntry(new ZipEntry(ent.getName()));
+								if (modFiles.contains(ent.getName()))
+									modFiles.remove(ent.getName());
+							}
 							zipO.closeEntry();
 							if (ents.hasMoreElements())
 								ent = ents.nextElement();
@@ -729,6 +742,20 @@ public class MainWindow {
 				}, "Modification thread");
 				th.setDaemon(true);
 				th.start();
+			}
+
+			private long computeCrc(File file) throws IOException {
+				CRC32 crc = new CRC32();
+				FileInputStream in = new FileInputStream(file);
+				while (true) {
+					byte[] buf = new byte[2048];
+					int read = in.read(buf);
+					if (read <= 0)
+						break;
+					crc.update(buf, 0, read);
+				}
+				in.close();
+				return crc.getValue();
 			}
 		});
 		btnNewButton.setFont(new Font("Tahoma", Font.PLAIN, 12));
