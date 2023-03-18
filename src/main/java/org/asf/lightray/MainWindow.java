@@ -55,6 +55,7 @@ import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
+import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
@@ -456,6 +457,7 @@ public class MainWindow {
 						ProgressWindow.WindowLogger.setLabel("Creating modified APK...");
 						FileOutputStream outp = new FileOutputStream("lightray-work/apks/base.modified.apk");
 						ZipOutputStream zipO = new ZipOutputStream(outp);
+						zipO.setLevel(Deflater.NO_COMPRESSION);
 						ZipFile archive = new ZipFile(textField.getText());
 
 						// Update files
@@ -473,9 +475,7 @@ public class MainWindow {
 						while (ent != null) {
 							existingEntries.add(ent.getName());
 							ProgressWindow.WindowLogger.log("  Updating " + ent.getName());
-							ZipEntry newEnt = new ZipEntry(ent.getName());
-							newEnt.setMethod(ZipEntry.STORED);
-							zipO.putNextEntry(newEnt);
+							zipO.putNextEntry(new ZipEntry(ent.getName()));
 							InputStream entStrm = archive.getInputStream(ent);
 							if (!ent.isDirectory()) {
 								if (modFiles.contains(ent.getName())) {
