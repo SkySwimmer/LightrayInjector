@@ -473,7 +473,9 @@ public class MainWindow {
 						while (ent != null) {
 							existingEntries.add(ent.getName());
 							ProgressWindow.WindowLogger.log("  Updating " + ent.getName());
-							zipO.putNextEntry(ent);
+							ZipEntry newEnt = new ZipEntry(ent.getName());
+							newEnt.setMethod(ZipEntry.STORED);
+							zipO.putNextEntry(newEnt);
 							InputStream entStrm = archive.getInputStream(ent);
 							if (!ent.isDirectory()) {
 								if (modFiles.contains(ent.getName())) {
