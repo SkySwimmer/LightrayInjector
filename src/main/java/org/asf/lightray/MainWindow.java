@@ -15,6 +15,14 @@ import javax.swing.ListModel;
 import javax.swing.UIManager;
 import javax.swing.UnsupportedLookAndFeelException;
 import javax.swing.filechooser.FileFilter;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.transform.OutputKeys;
+import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerFactory;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.StreamResult;
 
 import org.asf.cyan.fluid.DynamicClassLoader;
 import org.asf.cyan.fluid.Fluid;
@@ -23,11 +31,24 @@ import org.asf.cyan.fluid.Transformer.AnnotationInfo;
 import org.asf.cyan.fluid.api.FluidTransformer;
 import org.asf.cyan.fluid.bytecode.FluidClassPool;
 import org.objectweb.asm.tree.ClassNode;
+import org.w3c.dom.Comment;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.NamedNodeMap;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+import org.w3c.dom.Text;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
+
+import pxb.android.axml.AxmlReader;
+import pxb.android.axml.AxmlVisitor;
+import pxb.android.axml.AxmlWriter;
+import pxb.android.axml.NodeVisitor;
 
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
@@ -45,7 +66,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.ProcessBuilder.Redirect;
-import java.lang.reflect.InvocationTargetException;
 import java.net.URL;
 import java.net.URLConnection;
 import java.nio.file.Files;
@@ -228,18 +248,43 @@ public class MainWindow {
 					return;
 				}
 
+				// Save
+				File lastApk = new File("lastapk.json");
+				JsonObject lastApkInfo = new JsonObject();
+				lastApkInfo.addProperty("path", textField.getText());
+				try {
+					Files.writeString(lastApk.toPath(), lastApkInfo.toString());
+				} catch (IOException e2) {
+				}
+
 				frmLightray.dispose();
+				ProgressWindow.WindowLogger.showWindow();
 				Thread th = new Thread(() -> {
-					try {
-						EventQueue.invokeAndWait(() -> {
-							ProgressWindow.WindowLogger.showWindow();
-						});
-					} catch (InvocationTargetException | InterruptedException e1) {
-					}
 					ProgressWindow.WindowLogger.setLabel("Preparing...");
 					ProgressWindow.WindowLogger.log("Processing...");
 
 					try {
+						// Parse input
+						ZipFile archive = new ZipFile(textField.getText());
+						Document androidManifestDom = parseAXML(
+								archive.getInputStream(archive.getEntry("AndroidManifest.xml")));
+						archive.close();
+
+						// Pull API version
+						Element manifestRoot = androidManifestDom.getDocumentElement();
+						Element sdkVersion = (Element) manifestRoot.getElementsByTagName("uses-sdk").item(0);
+						String minSdk = sdkVersion.getAttribute("android:minSdkVersion");
+						String targetSdk = sdkVersion.getAttribute("android:targetSdkVersion");
+
+						// Pull app info
+						String pkg = manifestRoot.getAttribute("package");
+						String appVerCode = manifestRoot.getAttribute("android:versionCode");
+						String appVerName = manifestRoot.getAttribute("android:versionName");
+						ProgressWindow.WindowLogger
+								.log("Application: " + pkg + " " + appVerName + " (build " + appVerCode + ")");
+						ProgressWindow.WindowLogger.log("Target SDK: " + targetSdk + ", minimal SDK: " + minSdk);
+						ProgressWindow.WindowLogger.log("");
+
 						// Prepare directories
 						ProgressWindow.WindowLogger.setLabel("Preparing files...");
 						ProgressWindow.WindowLogger.log("Creating temporary directories...");
@@ -354,7 +399,7 @@ public class MainWindow {
 							ProgressWindow.WindowLogger.log("Applying files from " + entry.name);
 							new File("lightray-work/mods").mkdirs();
 							File mod = new File("patches/" + entry.name);
-							ZipFile archive = new ZipFile(mod);
+							archive = new ZipFile(mod);
 							ProgressWindow.WindowLogger.setMax(archive.size());
 							Enumeration<? extends ZipEntry> ents = archive.entries();
 							ZipEntry ent = ents.nextElement();
@@ -375,9 +420,143 @@ public class MainWindow {
 										modFiles.remove(ent.getName());
 									} else {
 										out.getParentFile().mkdirs();
-										FileOutputStream strm = new FileOutputStream(out);
-										archive.getInputStream(ent).transferTo(strm);
-										strm.close();
+										if ((out.getName().endsWith(".xml") || out.getName().endsWith(".axml"))
+												&& !ent.getName().startsWith("assets/")
+												&& !ent.getName().startsWith("/assets/")) {
+											if (!out.exists()) {
+												// If needed, decompile the AXML
+												try {
+													Document original = parseAXML(archive.getInputStream(ent));
+
+													// Write
+													DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+													dbf.setNamespaceAware(false);
+													DocumentBuilder db = dbf.newDocumentBuilder();
+													Document newDoc = db.newDocument();
+													NodeList lst = original.getChildNodes();
+													for (int i = 0; i < lst.getLength(); i++) {
+														Node node = lst.item(i);
+														newDoc.appendChild(newDoc.importNode(node, true));
+													}
+													FileOutputStream strm = new FileOutputStream(out);
+													TransformerFactory transformerFactory = TransformerFactory
+															.newInstance();
+													Transformer transformer = transformerFactory.newTransformer();
+													transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
+													transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+													DOMSource source = new DOMSource(newDoc);
+													StreamResult result = new StreamResult(strm);
+													transformer.transform(source, result);
+													strm.close();
+												} catch (Exception e) {
+													// Not AXML
+													FileOutputStream strm = new FileOutputStream(out);
+													archive.getInputStream(ent).transferTo(strm);
+													strm.close();
+												}
+											} else {
+												// Merge documents
+												DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+												dbf.setNamespaceAware(false);
+												DocumentBuilder db = dbf.newDocumentBuilder();
+												Document original = null;
+												try {
+													original = db.parse(archive.getInputStream(ent));
+												} catch (Exception e) {
+													// Probably compiled XML, decompile it
+													try {
+														original = parseAXML(archive.getInputStream(ent));
+													} catch (Exception e2) {
+														// Lets bail out-
+														FileOutputStream strm = new FileOutputStream(out);
+														archive.getInputStream(ent).transferTo(strm);
+														strm.close();
+													}
+												}
+												if (original != null) {
+													Document merge = null;
+													try {
+														merge = db.parse(archive.getInputStream(ent));
+													} catch (Exception e) {
+														// Probably compiled XML, decompile it
+														merge = parseAXML(archive.getInputStream(ent));
+													}
+													if (merge != null) {
+														Document newDoc = db.newDocument();
+														Element fakeRoot = newDoc
+																.createElement("lightrayxmlinjectroot");
+														// Collect namespaces
+														ArrayList<String> namespaces = new ArrayList<String>();
+														namespaces.add("xmlns:lightray");
+														NodeList lst = original.getChildNodes();
+														for (int i = 0; i < lst.getLength(); i++) {
+															Node node = lst.item(i);
+															if (node instanceof Element) {
+																Element ele = (Element) node;
+																NamedNodeMap attrs = ele.getAttributes();
+																for (int i2 = 0; i2 < attrs.getLength(); i2++) {
+																	String attrName = attrs.item(i2).getNodeName();
+																	if (attrName.startsWith("xmlns:")) {
+																		if (!namespaces.contains(attrName)) {
+																			namespaces.add(attrName);
+																			fakeRoot.setAttribute(attrName,
+																					ele.getAttribute(attrName));
+																		}
+																	}
+																}
+															}
+														}
+														fakeRoot.setAttribute("xmlns:lightray",
+																"http://schemas.aerialworks.ddns.net/lightray");
+														fakeRoot.setAttribute("lightray:fakerootelement", "true");
+														newDoc.appendChild(fakeRoot);
+														lst = original.getChildNodes();
+														for (int i = 0; i < lst.getLength(); i++) {
+															Node node = lst.item(i);
+															if (node instanceof Element
+																	&& ((Element) node)
+																			.hasAttribute("lightray:fakerootelement")
+																	&& ((Element) node)
+																			.getAttribute("lightray:fakerootelement")
+																			.equals("true")) {
+
+																// Get from old fake root
+																Element oldRoot = (Element) node;
+																lst = oldRoot.getChildNodes();
+																for (int i2 = 0; i2 < lst.getLength(); i2++) {
+																	node = lst.item(i2);
+																	fakeRoot.appendChild(newDoc.importNode(node, true));
+																}
+
+																break;
+															}
+															fakeRoot.appendChild(newDoc.importNode(node, true));
+														}
+														lst = merge.getChildNodes();
+														for (int i = 0; i < lst.getLength(); i++) {
+															Node node = lst.item(i);
+															fakeRoot.appendChild(newDoc.importNode(node, true));
+														}
+
+														// Write
+														FileOutputStream strm = new FileOutputStream(out);
+														TransformerFactory transformerFactory = TransformerFactory
+																.newInstance();
+														Transformer transformer = transformerFactory.newTransformer();
+														transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
+														transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+														DOMSource source = new DOMSource(newDoc);
+														StreamResult result = new StreamResult(strm);
+														transformer.transform(source, result);
+														strm.close();
+													}
+												}
+											}
+										} else {
+											FileOutputStream strm = new FileOutputStream(out);
+											archive.getInputStream(ent).transferTo(strm);
+											strm.close();
+										}
 									}
 								}
 								if (ents.hasMoreElements())
@@ -457,7 +636,7 @@ public class MainWindow {
 						ProgressWindow.WindowLogger.setLabel("Creating modified APK...");
 						FileOutputStream outp = new FileOutputStream("lightray-work/apks/base.modified.apk");
 						ZipOutputStream zipO = new ZipOutputStream(outp);
-						ZipFile archive = new ZipFile(textField.getText());
+						archive = new ZipFile(textField.getText());
 
 						// Update files
 						ProgressWindow.WindowLogger.log("Updating files...");
@@ -474,26 +653,175 @@ public class MainWindow {
 						while (ent != null) {
 							existingEntries.add(ent.getName());
 							ProgressWindow.WindowLogger.log("  Updating " + ent.getName());
+
+							// Check if its a AXML resource
+							if ((ent.getName().endsWith(".xml") || ent.getName().endsWith(".axml"))
+									&& !ent.getName().startsWith("assets/") && !ent.getName().startsWith("/assets/")) {
+								try {
+									// Decode original axml
+									new File("lightray-work/axml/" + ent.getName()).getParentFile().mkdirs();
+									new File("lightray-work/axml-dump/" + ent.getName()).getParentFile().mkdirs();
+									File f = new File("lightray-work/axml/" + ent.getName());
+									if (!f.exists()) {
+										// Save current
+										FileOutputStream strmO = new FileOutputStream(f);
+										archive.getInputStream(ent).transferTo(strmO);
+										strmO.close();
+									}
+
+									// Decode
+									FileInputStream inp = new FileInputStream(f);
+									Document doc = parseAXML(inp);
+									inp.close();
+
+									// Dump
+									DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+									dbf.setNamespaceAware(false);
+									DocumentBuilder db = dbf.newDocumentBuilder();
+									Document newDoc = db.newDocument();
+									NodeList lst = doc.getChildNodes();
+									for (int i = 0; i < lst.getLength(); i++) {
+										Node node = lst.item(i);
+										newDoc.appendChild(newDoc.importNode(node, true));
+									}
+									FileOutputStream strm = new FileOutputStream(
+											new File("lightray-work/axml-dump/" + ent.getName()));
+									TransformerFactory transformerFactory = TransformerFactory.newInstance();
+									Transformer transformer = transformerFactory.newTransformer();
+									transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
+									transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+									DOMSource source = new DOMSource(newDoc);
+									StreamResult result = new StreamResult(strm);
+									transformer.transform(source, result);
+									strm.close();
+								} catch (Exception e) {
+									// NO
+									// Library is unstable lets not crash
+								}
+							}
+
+							// Handle
 							InputStream entStrm = archive.getInputStream(ent);
 							if (!ent.isDirectory()) {
 								if (modFiles.contains(ent.getName())) {
 									ProgressWindow.WindowLogger.log("  Mod install " + ent.getName());
 
-									// Swap streams
-									entStrm.close();
-									ZipEntry newEnt = new ZipEntry(ent.getName());
-									if (ent.getName().equals("resources.arsc")
-											|| ent.getName().equals("/resources.arsc")) {
-										File file = new File("lightray-work/mods/" + ent.getName());
-										newEnt.setMethod(ZipEntry.STORED);
-										newEnt.setCrc(computeCrc(file));
-										newEnt.setSize(file.length());
-										newEnt.setCompressedSize(file.length());
+									// Check if its a AXML resource
+									if ((ent.getName().endsWith(".xml") || ent.getName().endsWith(".axml"))
+											&& !ent.getName().startsWith("assets/")
+											&& !ent.getName().startsWith("/assets/")) {
+										// Decode original axml
+										File f = new File("lightray-work/axml/" + ent.getName());
+										FileInputStream inp = new FileInputStream(f);
+										Document doc = parseAXML(inp);
+										inp.close();
+
+										// Prepare
+										DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+										dbf.setNamespaceAware(false);
+										DocumentBuilder db = dbf.newDocumentBuilder();
+										Document newDoc = db.newDocument();
+
+										// Import original
+										NodeList lst = doc.getChildNodes();
+										for (int i = 0; i < lst.getLength(); i++) {
+											// Add node
+											Node node = lst.item(i);
+											newDoc.appendChild(newDoc.importNode(node, true));
+										}
+
+										// Read doc with data to merge
+										Document modDoc = db.parse(new File("lightray-work/mods/" + ent.getName()));
+										lst = modDoc.getChildNodes();
+										for (int i = 0; i < lst.getLength(); i++) {
+											Node node = lst.item(i);
+											if (node instanceof Element) {
+												Element ele = (Element) node;
+												if (ele.hasAttribute("lightray:fakerootelement") && ele
+														.getAttribute("lightray:fakerootelement").equals("true")) {
+													// This was a fakeroot, means there are stack-loaded mods editing
+													// the same XML
+													lst = ele.getChildNodes();
+													for (int i2 = 0; i2 < lst.getLength(); i2++) {
+														node = lst.item(i2);
+
+														// Override attributes
+														if (node instanceof Element) {
+															Element nd = (Element) node;
+															NamedNodeMap attrs = ele.getAttributes();
+															for (int i3 = 0; i3 < attrs.getLength(); i3++) {
+																String attrName = attrs.item(i3).getNodeName();
+																if (!attrName.startsWith("lightray:"))
+																	nd.setAttribute(attrName,
+																			ele.getAttribute(attrName));
+															}
+														}
+
+														applyXMLTransformer(node, newDoc, newDoc);
+													}
+													break;
+												}
+											}
+
+											// Override attributes
+											if (node instanceof Element) {
+												Element nd = (Element) node;
+												NamedNodeMap attrs = node.getAttributes();
+												for (int i3 = 0; i3 < attrs.getLength(); i3++) {
+													String attrName = attrs.item(i3).getNodeName();
+													if (!attrName.startsWith("lightray:"))
+														nd.setAttribute(attrName, nd.getAttribute(attrName));
+												}
+											}
+
+											applyXMLTransformer(node, newDoc, newDoc);
+										}
+
+										// Dump modified
+										new File("lightray-work/axml-mod/" + ent.getName()).getParentFile().mkdirs();
+
+										// Dump
+										FileOutputStream strm = new FileOutputStream(
+												new File("lightray-work/axml-mod/" + ent.getName()));
+										TransformerFactory transformerFactory = TransformerFactory.newInstance();
+										Transformer transformer = transformerFactory.newTransformer();
+										transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
+										transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+										DOMSource source = new DOMSource(newDoc);
+										StreamResult result = new StreamResult(strm);
+										transformer.transform(source, result);
+										strm.close();
+
+										// Recompile
+										new File("lightray-work/axml-mod-bin/" + ent.getName()).getParentFile()
+												.mkdirs();
+										compileBinaryXML(new File("lightray-work/axml-mod-bin/" + ent.getName()),
+												newDoc);
+
+										// Swap streams
+										entStrm.close();
+										ZipEntry newEnt = new ZipEntry(ent.getName());
+										zipO.putNextEntry(newEnt);
+										entStrm = new FileInputStream("lightray-work/axml-mod-bin/" + ent.getName());
+										modFiles.remove(ent.getName());
+									} else {
+										// Swap streams
+										entStrm.close();
+										ZipEntry newEnt = new ZipEntry(ent.getName());
+										if (ent.getName().equals("resources.arsc")
+												|| ent.getName().equals("/resources.arsc")) {
+											File file = new File("lightray-work/mods/" + ent.getName());
+											newEnt.setMethod(ZipEntry.STORED);
+											newEnt.setCrc(computeCrc(file));
+											newEnt.setSize(file.length());
+											newEnt.setCompressedSize(file.length());
+										}
+										zipO.putNextEntry(newEnt);
+										entStrm = new FileInputStream("lightray-work/mods/" + ent.getName());
+										modFiles.remove(ent.getName());
 									}
-									zipO.putNextEntry(newEnt);
-									entStrm = new FileInputStream("lightray-work/mods/" + ent.getName());
-									modFiles.remove(ent.getName());
-								} else if (ent.getName().endsWith(".dex")) {
+								} else if (ent.getName().endsWith(".dex")
+										&& (patches.stream().anyMatch(t -> t.type == PatchEntryType.TRANSFORMER))) {
 									// Edit classes
 									ProgressWindow.WindowLogger.log("  Processing classes...");
 									ProgressWindow.WindowLogger.setLabel("Processing classes...");
@@ -575,31 +903,32 @@ public class MainWindow {
 									clJar.close();
 									outF.close();
 
-									// Run jar2dex
-									ProgressWindow.WindowLogger.log("    Running jar2dex...");
-									builder = new ProcessBuilder(jvm, "-cp", libs,
-											"com.googlecode.dex2jar.tools.Jar2Dex", fName + ".jar");
+									// Run dx
+									ProgressWindow.WindowLogger.log("    Running dx...");
+									builder = new ProcessBuilder(jvm, "-cp", libs, "com.android.dx.command.Main",
+											"--dex", "--no-strict", "--min-sdk-version", minSdk, "--output",
+											fName + "-patched.dex", fName + ".jar");
 									builder.directory(new File("lightray-work"));
 									builder.redirectInput(Redirect.PIPE);
 									builder.redirectOutput(Redirect.PIPE);
 									builder.redirectError(Redirect.PIPE);
 									proc = builder.start();
-									ProgressWindow.WindowLogger.log("      [JAR2DEX] "
-											+ new String(proc.getInputStream().readAllBytes(), "UTF-8").trim()
-													.replace("\r", "").replace("\n", "\n      [JAR2DEX] "));
-									ProgressWindow.WindowLogger.log("      [JAR2DEX] "
-											+ new String(proc.getErrorStream().readAllBytes(), "UTF-8").trim()
-													.replace("\r", "").replace("\n", "\n      [JAR2DEX] "));
+									ProgressWindow.WindowLogger.log(
+											"      [DX] " + new String(proc.getInputStream().readAllBytes(), "UTF-8")
+													.trim().replace("\r", "").replace("\n", "\n      [DX] "));
+									ProgressWindow.WindowLogger.log(
+											"      [DX] " + new String(proc.getErrorStream().readAllBytes(), "UTF-8")
+													.trim().replace("\r", "").replace("\n", "\n      [DX] "));
 									proc.waitFor();
 									if (proc.exitValue() != 0)
-										throw new Exception("Non-zero exit code for jar2dex!\n\n"
+										throw new Exception("Non-zero exit code for dx!\n\n"
 												+ "This is most commonly caused by a incompatible java environment.\n\n"
 												+ "Try updating your Java installation or try another version of it.\n\n"
 												+ "Exit code: " + proc.exitValue());
 
 									// Done
 									zipO.putNextEntry(new ZipEntry(ent.getName()));
-									entStrm = new FileInputStream("lightray-work/" + fName + "-jar2dex.dex");
+									entStrm = new FileInputStream("lightray-work/" + fName + "-patched.dex");
 									ProgressWindow.WindowLogger.setLabel("Creating modified APK...");
 								} else
 									zipO.putNextEntry(ent);
@@ -630,11 +959,46 @@ public class MainWindow {
 							ProgressWindow.WindowLogger.log("  Updating " + ent.getName());
 							zipO.putNextEntry(ent);
 							if (!file.endsWith("/")) {
-								// Swap streams
-								InputStream entStrm = new FileInputStream("lightray-work/mods/" + ent.getName());
-								modFiles.remove(ent.getName());
-								entStrm.transferTo(zipO);
-								entStrm.close();
+								// Compile XAML
+								boolean compSuccess = false;
+								if (!file.startsWith("/assets/") && !file.startsWith("assets/")
+										&& (file.endsWith(".axml") || file.endsWith(".xml"))) {
+									try {
+										// Prepare to read
+										DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+										dbf.setNamespaceAware(false);
+										DocumentBuilder db = dbf.newDocumentBuilder();
+										Document original = null;
+
+										// Read
+										InputStream entStrm = new FileInputStream(
+												"lightray-work/mods/" + ent.getName());
+										original = db.parse(entStrm);
+										entStrm.close();
+
+										// Recompile
+										new File("lightray-work/axml-mod-bin/" + ent.getName()).getParentFile()
+												.mkdirs();
+										compileBinaryXML(new File("lightray-work/axml-mod-bin/" + ent.getName()),
+												original);
+
+										// Write
+										entStrm = new FileInputStream("lightray-work/axml-mod-bin/" + ent.getName());
+										modFiles.remove(ent.getName());
+										entStrm.transferTo(zipO);
+										entStrm.close();
+									} catch (Exception e) {
+
+									}
+								}
+
+								if (!compSuccess) {
+									// Write
+									InputStream entStrm = new FileInputStream("lightray-work/mods/" + ent.getName());
+									modFiles.remove(ent.getName());
+									entStrm.transferTo(zipO);
+									entStrm.close();
+								}
 							}
 							zipO.closeEntry();
 							ProgressWindow.WindowLogger.increaseProgress();
@@ -743,20 +1107,6 @@ public class MainWindow {
 				th.setDaemon(true);
 				th.start();
 			}
-
-			private long computeCrc(File file) throws IOException {
-				CRC32 crc = new CRC32();
-				FileInputStream in = new FileInputStream(file);
-				while (true) {
-					byte[] buf = new byte[2048];
-					int read = in.read(buf);
-					if (read <= 0)
-						break;
-					crc.update(buf, 0, read);
-				}
-				in.close();
-				return crc.getValue();
-			}
 		});
 		btnNewButton.setFont(new Font("Tahoma", Font.PLAIN, 12));
 		btnNewButton.setBounds(573, 435, 227, 25);
@@ -818,11 +1168,11 @@ public class MainWindow {
 				entry.box.setFont(list.getFont());
 				entry.box.setBackground(list.getBackground());
 				if (cellHasFocus)
-					entry.box.setForeground(SystemColor.activeCaption);
+					entry.box.setForeground(SystemColor.textHighlight);
 				else
-					entry.box.setForeground(list.getForeground());
+					entry.box.setForeground(SystemColor.textText);
 				entry.box.setSelected(entry.enabled);
-				entry.box.setEnabled(cellHasFocus);
+				entry.box.setEnabled(true);
 				return entry.box;
 			}
 
@@ -839,6 +1189,17 @@ public class MainWindow {
 		scan(mods, "");
 
 		// Load active modifications
+		File lastApk = new File("lastapk.json");
+		if (lastApk.exists()) {
+			try {
+				JsonObject data = JsonParser.parseString(Files.readString(lastApk.toPath())).getAsJsonObject();
+				textField.setText(data.get("path").getAsString());
+			} catch (JsonSyntaxException | IOException e) {
+				JOptionPane.showMessageDialog(frmLightray,
+						"An unknown error occured loading previous apk path.\n" + "\n" + "Exception: " + e, "Error",
+						JOptionPane.ERROR_MESSAGE);
+			}
+		}
 		File modInfo = new File("activepatches.json");
 		if (modInfo.exists()) {
 			try {
@@ -1142,5 +1503,334 @@ public class MainWindow {
 		ProgressWindow.WindowLogger.setMax(100);
 		ProgressWindow.WindowLogger.setValue(100);
 		data.close();
+	}
+
+	private void applyXMLTransformer(Node node, Node parent, Document doc) {
+		if (node instanceof Element) {
+			Element ele = (Element) node;
+
+			// Check mode
+			Node outp = null;
+			if (ele.getAttribute("lightray:merge").equals("true")) {
+				// Merge
+
+				// Load clear attribute
+				boolean clear = false;
+				if (ele.hasAttribute("lightray:clear")) {
+					clear = ele.getAttribute("lightray:clear").equals("true");
+					ele.removeAttribute("lightray:clear");
+				}
+
+				// Load offset
+				int offset = 0;
+				if (ele.hasAttribute("lightray:offset")) {
+					offset = Integer.parseInt(ele.getAttribute("lightray:offset"));
+					ele.removeAttribute("lightray:offset");
+				}
+
+				// Load target filter
+				JsonObject targetFilter = new JsonObject();
+				if (ele.hasAttribute("lightray:filterattributes")) {
+					targetFilter = JsonParser.parseString(ele.getAttribute("lightray:filterattributes"))
+							.getAsJsonObject();
+					ele.removeAttribute("lightray:filterattributes");
+				}
+
+				// Find target
+				int current = 0;
+				NodeList lst = parent.getChildNodes();
+				for (int i = 0; i < lst.getLength(); i++) {
+					Node itm = lst.item(i);
+					String name = itm.getNodeName();
+					if (name.equals(node.getNodeName())) {
+						if (itm instanceof Element) {
+							Element element = (Element) itm;
+
+							// Check attribute filters
+							for (String key : targetFilter.keySet()) {
+								String value = targetFilter.get(key).getAsString();
+								if (!element.getAttribute(key).equals(value)) {
+									continue;
+								}
+							}
+						} else if (targetFilter.size() != 0)
+							continue; // NO
+
+						// Merge into it
+						if (current >= offset) {
+							outp = itm;
+							break;
+						}
+						offset++;
+					}
+				}
+
+				// Check result
+				if (outp == null)
+					return; // Invalid
+
+				// Clear if needed
+				if (clear) {
+					while (outp.hasChildNodes()) {
+						outp.removeChild(outp.getFirstChild());
+					}
+				}
+
+				// Insert other attributes
+				if (outp instanceof Element) {
+					NamedNodeMap attrs = ele.getAttributes();
+					for (int i = 0; i < attrs.getLength(); i++) {
+						Node attr = attrs.item(i);
+						if (!attr.getNodeName().startsWith("lightray:")) {
+							((Element) outp).setAttribute(attr.getNodeName(), ele.getAttribute(attr.getNodeName()));
+						}
+					}
+				}
+
+				// Remove attribute
+				ele.removeAttribute("lightray:merge");
+			} else {
+				// Insert
+				outp = (Element) doc.importNode(ele, true);
+				parent.appendChild(outp);
+			}
+
+			// Handle child nodes
+			NodeList lst = ele.getChildNodes();
+			for (int i = 0; i < lst.getLength(); i++) {
+				Node itm = lst.item(i);
+				applyXMLTransformer(itm, outp, doc);
+			}
+		} else {
+			// Append
+			if (node instanceof Text) {
+				Text t = (Text) node;
+				if (t.getTextContent() == null || t.getTextContent().isBlank())
+					return;
+				else {
+					// Delete old text
+					NodeList lst = parent.getChildNodes();
+					for (int i = 0; i < lst.getLength(); i++) {
+						Node itm = lst.item(i);
+						if (itm instanceof Text) {
+							parent.removeChild(itm);
+							break;
+						}
+					}
+				}
+			}
+			parent.appendChild(doc.importNode(node, true));
+		}
+	}
+
+	private void compileBinaryXML(File output, Document doc) throws IOException {
+		FileOutputStream outputS = new FileOutputStream(output);
+		compileBinaryXML(outputS, doc);
+		outputS.close();
+	}
+
+	private void compileBinaryXML(FileOutputStream output, Document doc) throws IOException {
+		// Create writer
+		AxmlWriter writer = new AxmlWriter();
+
+		// Write elements
+		HashMap<String, String> namespaces = new HashMap<String, String>();
+		NodeList lst = doc.getChildNodes();
+		for (int i = 0; i < lst.getLength(); i++) {
+			Node node = lst.item(i);
+			if (node instanceof Comment)
+				continue;
+			writeNode(node, writer, namespaces);
+		}
+
+		// Write
+		output.write(writer.toByteArray());
+	}
+
+	private void writeNode(Node node, AxmlVisitor parentRoot, HashMap<String, String> namespaces) {
+		// Add namespaces
+		if (node instanceof Element) {
+			Element ele = (Element) node;
+			NamedNodeMap attrs = ele.getAttributes();
+			for (int i = 0; i < attrs.getLength(); i++) {
+				Node attr = attrs.item(i);
+				if (attr.getNodeName().startsWith("xmlns:")) {
+					String prefix = attr.getNodeName().substring("xmlns:".length());
+					parentRoot.ns(prefix, ele.getAttribute(attr.getNodeName()), -1);
+					namespaces.put(prefix, ele.getAttribute(attr.getNodeName()));
+				}
+			}
+		}
+
+		writeNode(node, (NodeVisitor) parentRoot, namespaces);
+	}
+
+	private void writeNode(Node node, NodeVisitor parent, HashMap<String, String> namespaces) {
+		// Create child
+		String name = node.getNodeName();
+		String ns = null;
+
+		// Find namespace
+		for (String namespace : namespaces.keySet()) {
+			if (name.startsWith(namespace + ":")) {
+				ns = namespaces.get(namespace);
+				name = name.substring(name.indexOf(":") + 1);
+				break;
+			}
+		}
+
+		NodeVisitor ch = parent.child(ns, name);
+		writeNodeContent(node, ch, namespaces);
+	}
+
+	private void writeNodeContent(Node node, NodeVisitor ch, HashMap<String, String> namespaces) {
+		// Write element fields
+		if (node instanceof Element) {
+			Element ele = (Element) node;
+
+			// Write text if present
+			String txt = ele.getTextContent();
+			if (txt != null && !txt.isBlank())
+				ch.text(-1, txt);
+
+			// Write attributes
+			NamedNodeMap attrs = ele.getAttributes();
+			for (int i = 0; i < attrs.getLength(); i++) {
+				Node attr = attrs.item(i);
+				if (!attr.getNodeName().startsWith("xmlns:")) {
+					String name = attr.getNodeName();
+					String value = ele.getAttribute(name);
+					String ns = null;
+
+					// Find namespace
+					for (String namespace : namespaces.keySet()) {
+						if (name.startsWith(namespace + ":")) {
+							ns = namespaces.get(namespace);
+							name = name.substring(name.indexOf(":") + 1);
+							break;
+						}
+					}
+
+					// Find type
+					Object val = null;
+					int type = -1;
+
+					// Find type
+					if (value.startsWith("@id/0x") && value.substring("@id/0x".length()).matches("^[0-9A-Fa-f]+$")) {
+						try {
+							val = Integer.parseInt(value.substring("@id/0x".length()), 16);
+							type = NodeVisitor.TYPE_REFERENCE;
+						} catch (NumberFormatException e) {
+						}
+					}
+					if (type == -1) {
+						if (value.startsWith("0x") && value.substring(2).matches("^[0-9A-Fa-f]+$")) {
+							try {
+								val = Integer.parseInt(value.substring(2), 16);
+								type = NodeVisitor.TYPE_INT_HEX;
+							} catch (NumberFormatException e) {
+							}
+						}
+					}
+					if (type == -1) {
+						if (value.equalsIgnoreCase("true") || value.equalsIgnoreCase("false")) {
+							try {
+								val = value.equalsIgnoreCase("true");
+								type = NodeVisitor.TYPE_INT_BOOLEAN;
+							} catch (NumberFormatException e) {
+							}
+						}
+					}
+					if (type == -1) {
+						if (value.matches("^[0-9]+$")) {
+							try {
+								val = Integer.parseInt(value);
+								type = NodeVisitor.TYPE_FIRST_INT;
+							} catch (NumberFormatException e) {
+							}
+						}
+					}
+					if (type == -1) {
+						val = value;
+						type = NodeVisitor.TYPE_STRING;
+					}
+
+					// Write
+					if (type != -1)
+						ch.attr(ns, name, -1, type, val);
+				}
+			}
+
+			// Write child nodes
+			NodeList lst = node.getChildNodes();
+			for (int i = 0; i < lst.getLength(); i++) {
+				Node child = lst.item(i);
+				if (child instanceof Comment || child instanceof Text)
+					continue;
+				writeNode(child, ch, namespaces);
+			}
+		}
+	}
+
+	private Document parseAXML(InputStream inp) throws IOException, ParserConfigurationException {
+		AxmlReader reader = new AxmlReader(inp.readAllBytes());
+		return parseAxml(reader);
+	}
+
+	private Document parseAxml(AxmlReader reader) throws IOException, ParserConfigurationException {
+		// Create new document container
+		DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+		dbf.setNamespaceAware(false);
+		DocumentBuilder db = dbf.newDocumentBuilder();
+		Document newDoc = db.newDocument();
+
+		// Start reading
+		HashMap<String, String> attrs = new HashMap<String, String>();
+		HashMap<String, String> namespaces = new HashMap<String, String>();
+		reader.accept(new AxmlVisitor() {
+
+			@Override
+			public void attr(String ns, String name, int resourceId, int type, Object obj) {
+				super.attr(ns, name, resourceId, type, obj);
+				attrs.put((ns == null ? "" : ns + ":") + name, name);
+			}
+
+			@Override
+			public NodeVisitor child(String ns, String name) {
+				return new ChildNodeVisitor(namespaces, ns, name, newDoc, newDoc);
+			}
+
+			@Override
+			public void text(int lineNumber, String value) {
+				super.text(lineNumber, value);
+			}
+
+			@Override
+			public void ns(String prefix, String uri, int ln) {
+				super.ns(prefix, uri, ln);
+				attrs.put("xmlns:" + prefix, uri);
+				namespaces.put(uri, prefix);
+			}
+
+		});
+		if (newDoc.getDocumentElement() != null) {
+			// Assign attributes
+			attrs.forEach((key, val) -> newDoc.getDocumentElement().setAttribute(key, val));
+		}
+		return newDoc;
+	}
+
+	private long computeCrc(File file) throws IOException {
+		CRC32 crc = new CRC32();
+		FileInputStream in = new FileInputStream(file);
+		while (true) {
+			byte[] buf = new byte[2048];
+			int read = in.read(buf);
+			if (read <= 0)
+				break;
+			crc.update(buf, 0, read);
+		}
+		in.close();
+		return crc.getValue();
 	}
 }
