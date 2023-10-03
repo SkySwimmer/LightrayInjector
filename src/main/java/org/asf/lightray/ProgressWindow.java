@@ -27,7 +27,7 @@ public class ProgressWindow {
 	public JFrame frm;
 
 	public static class WindowLogger {
-		public static ProgressWindow frame = new ProgressWindow();
+		public static ProgressWindow frame;
 
 		public static void showWindow() {
 			frame = new ProgressWindow();
@@ -72,22 +72,34 @@ public class ProgressWindow {
 		}
 
 		public static void increaseProgress() {
+			if (frame == null)
+				return;
 			if (frame.progressBar.getValue() + 1 > frame.progressBar.getMaximum())
 				return;
 			frame.progressBar.setValue(frame.progressBar.getValue() + 1);
 		}
 
 		public static void fatalError() {
+			if (frame == null)
+				return;
 			JOptionPane.showMessageDialog(frame.frm, "A fatal error occured:\n" + frame.lastMessageText, "Fatal Error",
 					JOptionPane.ERROR_MESSAGE);
 		}
 
 		public static void fatalError(String msg) {
+			if (frame == null) {
+				System.err.println(msg);
+				return;
+			}
 			JOptionPane.showMessageDialog(frame.frm, "A fatal error occured:\n" + msg, "Fatal Error",
 					JOptionPane.ERROR_MESSAGE);
 		}
 
 		public static void log(String message) {
+			System.out.println(message);
+
+			if (frame == null)
+				return;
 			if (message.endsWith("\n"))
 				message = message.substring(0, message.length() - 1);
 
@@ -99,6 +111,8 @@ public class ProgressWindow {
 		}
 
 		public static void setLabel(String message) {
+			if (frame == null)
+				return;
 			frame.setLabel(message);
 		}
 	}

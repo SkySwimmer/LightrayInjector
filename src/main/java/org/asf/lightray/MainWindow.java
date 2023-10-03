@@ -98,17 +98,28 @@ public class MainWindow {
 	public static String dex2jarInnerFolder = "dex-tools-2.1";
 	public static String dex2jarDownload = "https://github.com/pxb1988/dex2jar/releases/download/v2.1/dex2jar-2.1.zip";
 
+	private static MainWindow winInst;
 	private JFrame frmLightray;
 	private JTextField textField;
 	private boolean shiftDown;
-	private DynamicClassLoader dynLoader = new DynamicClassLoader();
-	private HashMap<String, List<ILightrayPatcher>> patchers = new HashMap<String, List<ILightrayPatcher>>();
-	private HashMap<String, PatchEntry> patches = new HashMap<String, PatchEntry>();
+	private static DynamicClassLoader dynLoader = new DynamicClassLoader();
+	private static HashMap<String, List<ILightrayPatcher>> patchers = new HashMap<String, List<ILightrayPatcher>>();
+	private static HashMap<String, PatchEntry> patches = new HashMap<String, PatchEntry>();
+	private static ArrayList<File> libs;
 
 	/**
 	 * Launch the application.
 	 */
 	public static void main(String[] args) {
+		// Check arguments
+		for (String arg : args) {
+			if (arg.equalsIgnoreCase("--build-now")) {
+				buildFromCli(args);
+				return;
+			}
+		}
+
+		// Show window
 		EventQueue.invokeLater(new Runnable() {
 			public void run() {
 				try {
@@ -125,6 +136,7 @@ public class MainWindow {
 	 * Create the application.
 	 */
 	public MainWindow() {
+		winInst = this;
 		initialize();
 	}
 
@@ -264,832 +276,11 @@ public class MainWindow {
 					ProgressWindow.WindowLogger.log("Processing...");
 
 					try {
-						// Parse input
-						ZipFile archive = new ZipFile(textField.getText());
-						Document androidManifestDom = parseAXML(
-								archive.getInputStream(archive.getEntry("AndroidManifest.xml")));
-						archive.close();
-
-						// Pull API version
-						Element manifestRoot = androidManifestDom.getDocumentElement();
-						Element sdkVersion = (Element) manifestRoot.getElementsByTagName("uses-sdk").item(0);
-						String minSdk = sdkVersion.getAttribute("android:minSdkVersion");
-						String targetSdk = sdkVersion.getAttribute("android:targetSdkVersion");
-
-						// Pull app info
-						String pkg = manifestRoot.getAttribute("package");
-						String appVerCode = manifestRoot.getAttribute("android:versionCode");
-						String appVerName = manifestRoot.getAttribute("android:versionName");
-						ProgressWindow.WindowLogger
-								.log("Application: " + pkg + " " + appVerName + " (build " + appVerCode + ")");
-						ProgressWindow.WindowLogger.log("Target SDK: " + targetSdk + ", minimal SDK: " + minSdk);
-						ProgressWindow.WindowLogger.log("");
-
-						// Prepare directories
-						ProgressWindow.WindowLogger.setLabel("Preparing files...");
-						ProgressWindow.WindowLogger.log("Creating temporary directories...");
-						if (new File("lightray-work").exists())
-							deleteDir(new File("lightray-work"));
-						new File("lightray-work/mods").mkdirs();
-						new File("lightray-work/apks").mkdirs();
-						ProgressWindow.WindowLogger.log("Done.");
-
-						// Download dex2jar
-						if (!new File("dex2jar/complete").exists()) {
-							ProgressWindow.WindowLogger.log("");
-							ProgressWindow.WindowLogger
-									.log("Downloading dex2jar... (note this package is owned by pxb1988)");
-							ProgressWindow.WindowLogger.setLabel("Downloading dex2jar...");
-							downloadFile("lightray-work/dex2jar.zip", dex2jarDownload);
-							ProgressWindow.WindowLogger.log("Extracting dex2jar...");
-							extractFile("lightray-work/dex2jar.zip", "lightray-work");
-							ProgressWindow.WindowLogger.log("Moving dex2jar...");
-							new File("lightray-work/" + dex2jarInnerFolder).renameTo(new File("dex2jar"));
-							new File("dex2jar/complete").createNewFile();
-						}
-
-						// Download build tools
-						if (!new File("buildtools/complete").exists()) {
-							if (new File("buildtools").exists())
-								deleteDir(new File("buildtools"));
-							new File("buildtools").mkdirs();
-							ProgressWindow.WindowLogger.log("");
-							ProgressWindow.WindowLogger
-									.log("Downloading Android Build Tools... (note this package is owned by google)");
-							ProgressWindow.WindowLogger.setLabel("Downloading Android Build Tools...");
-							downloadFile("lightray-work/buildtools/build-tools.zip",
-									"https://dl.google.com/android/repository/build-tools_r33-" + platformString()
-											+ ".zip");
-							ProgressWindow.WindowLogger.log("Extracting buildtools...");
-							extractFile("lightray-work/buildtools/build-tools.zip",
-									"lightray-work/buildtools/build-tools-ext");
-							ProgressWindow.WindowLogger.log("Moving buildtools...");
-							new File("lightray-work/buildtools/build-tools-ext/android-13")
-									.renameTo(new File("buildtools/build-tools"));
-							deleteDir(new File("lightray-work/buildtools"));
-							new File("buildtools/complete").createNewFile();
-						}
-
-						// Create keystore
-						if (!new File("keystore.jks").exists()) {
-							ProgressWindow.WindowLogger.log("");
-							ProgressWindow.WindowLogger.log("Generating keystore...");
-							ProgressWindow.WindowLogger.setLabel("Generating keystore...");
-							String home = System.getProperty("java.home");
-							File keytoolFile = new File(home, "bin/keytool");
-							ProcessBuilder builder = new ProcessBuilder(keytoolFile.getPath(), "-genkey", "-v",
-									"-keystore", "keystore.jks", "-alias", "appmod", "-sigalg", "SHA256withRSA",
-									"-keyalg", "RSA", "-keysize", "2048", "-validity", "7300");
-							builder.redirectInput(Redirect.PIPE);
-							builder.redirectOutput(Redirect.PIPE);
-							builder.redirectError(Redirect.PIPE);
-							Process proc = builder.start();
-							proc.getOutputStream().write("appmod\nappmod\n\n\n\n\n\n\nyes".getBytes());
-							proc.getOutputStream().close();
-							ProgressWindow.WindowLogger.log(new String(proc.getInputStream().readAllBytes(), "UTF-8")
-									.trim().replace("\r", "").replace("\n", "\n    [KEYTOOL] "));
-							ProgressWindow.WindowLogger.log(new String(proc.getErrorStream().readAllBytes(), "UTF-8")
-									.trim().replace("\r", "").replace("\n", "\n    [KEYTOOL] "));
-							proc.waitFor();
-							if (proc.exitValue() != 0)
-								throw new Exception("Non-zero exit code for KEYTOOL.");
-						}
-
-						// Discover mods
-						ProgressWindow.WindowLogger.log("");
-						ProgressWindow.WindowLogger.log("Discovering modifications...");
-						ProgressWindow.WindowLogger.setLabel("Discovering modifications...");
-
-						// Gather active mods
-						int max = 0;
-						int mPatchers = 0;
-						ArrayList<PatchEntry> patches = new ArrayList<PatchEntry>();
-						ArrayList<ILightrayPatcher> patchers = new ArrayList<ILightrayPatcher>();
-						ArrayList<String> modFiles = new ArrayList<String>();
-						for (PatchEntry patch : MainWindow.this.patches.values()) {
-							if (patch.enabled) {
-								ProgressWindow.WindowLogger.log(
-										"Discovered enabled modification: " + patch.name + ", type: " + patch.type);
-								if (patch.type == PatchEntryType.PATCHER) {
-									mPatchers += MainWindow.this.patchers.get(patch.name).size();
-									patchers.addAll(MainWindow.this.patchers.get(patch.name));
-								} else {
-									max++;
-									patches.add(patch);
-								}
-							}
-						}
-
-						// Load libraries
-						File libsDir = new File("libs");
-						libsDir.mkdirs();
-						FluidClassPool pool = FluidClassPool.create();
-						ProgressWindow.WindowLogger.log("Loading libraries...");
-						ProgressWindow.WindowLogger.setLabel("Loading libraries...");
-						loadLibs(libsDir, pool);
-
-						// Load modifications
-						ProgressWindow.WindowLogger.setMax(max);
-						ProgressWindow.WindowLogger.setValue(0);
-						ProgressWindow.WindowLogger.log("Loading modifications...");
-						ProgressWindow.WindowLogger.setLabel("Loading modifications...");
-						ProgressWindow.WindowLogger.log("Extracting mod resources...");
-						for (PatchEntry entry : patches) {
-							// Extract resources
-							ProgressWindow.WindowLogger.log("Applying files from " + entry.name);
-							new File("lightray-work/mods").mkdirs();
-							File mod = new File("patches/" + entry.name);
-							archive = new ZipFile(mod);
-							ProgressWindow.WindowLogger.setMax(archive.size());
-							Enumeration<? extends ZipEntry> ents = archive.entries();
-							ZipEntry ent = ents.nextElement();
-							while (ent != null) {
-								ProgressWindow.WindowLogger.log("  Extracting " + ent.getName());
-								modFiles.add(ent.getName());
-								File out = new File("lightray-work/mods", ent.getName());
-								if (ent.isDirectory()) {
-									out.mkdirs();
-								} else {
-									if (ent.getName().endsWith(".class")) {
-										// Copy file
-										File outp = new File("lightray-work/classes/" + ent.getName());
-										outp.getParentFile().mkdirs();
-										FileOutputStream strm = new FileOutputStream(outp);
-										archive.getInputStream(ent).transferTo(strm);
-										strm.close();
-										modFiles.remove(ent.getName());
-									} else {
-										out.getParentFile().mkdirs();
-										if ((out.getName().endsWith(".xml") || out.getName().endsWith(".axml"))
-												&& !ent.getName().startsWith("assets/")
-												&& !ent.getName().startsWith("/assets/")) {
-											if (!out.exists()) {
-												// If needed, decompile the AXML
-												try {
-													Document original = parseAXML(archive.getInputStream(ent));
-
-													// Write
-													DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-													dbf.setNamespaceAware(false);
-													DocumentBuilder db = dbf.newDocumentBuilder();
-													Document newDoc = db.newDocument();
-													NodeList lst = original.getChildNodes();
-													for (int i = 0; i < lst.getLength(); i++) {
-														Node node = lst.item(i);
-														newDoc.appendChild(newDoc.importNode(node, true));
-													}
-													FileOutputStream strm = new FileOutputStream(out);
-													TransformerFactory transformerFactory = TransformerFactory
-															.newInstance();
-													Transformer transformer = transformerFactory.newTransformer();
-													transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
-													transformer.setOutputProperty(OutputKeys.INDENT, "yes");
-													DOMSource source = new DOMSource(newDoc);
-													StreamResult result = new StreamResult(strm);
-													transformer.transform(source, result);
-													strm.close();
-												} catch (Exception e) {
-													// Not AXML
-													FileOutputStream strm = new FileOutputStream(out);
-													archive.getInputStream(ent).transferTo(strm);
-													strm.close();
-												}
-											} else {
-												// Merge documents
-												DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-												dbf.setNamespaceAware(false);
-												DocumentBuilder db = dbf.newDocumentBuilder();
-												Document original = null;
-												try {
-													original = db.parse(archive.getInputStream(ent));
-												} catch (Exception e) {
-													// Probably compiled XML, decompile it
-													try {
-														original = parseAXML(archive.getInputStream(ent));
-													} catch (Exception e2) {
-														// Lets bail out-
-														FileOutputStream strm = new FileOutputStream(out);
-														archive.getInputStream(ent).transferTo(strm);
-														strm.close();
-													}
-												}
-												if (original != null) {
-													Document merge = null;
-													try {
-														merge = db.parse(archive.getInputStream(ent));
-													} catch (Exception e) {
-														// Probably compiled XML, decompile it
-														merge = parseAXML(archive.getInputStream(ent));
-													}
-													if (merge != null) {
-														Document newDoc = db.newDocument();
-														Element fakeRoot = newDoc
-																.createElement("lightrayxmlinjectroot");
-														// Collect namespaces
-														ArrayList<String> namespaces = new ArrayList<String>();
-														namespaces.add("xmlns:lightray");
-														NodeList lst = original.getChildNodes();
-														for (int i = 0; i < lst.getLength(); i++) {
-															Node node = lst.item(i);
-															if (node instanceof Element) {
-																Element ele = (Element) node;
-																NamedNodeMap attrs = ele.getAttributes();
-																for (int i2 = 0; i2 < attrs.getLength(); i2++) {
-																	String attrName = attrs.item(i2).getNodeName();
-																	if (attrName.startsWith("xmlns:")) {
-																		if (!namespaces.contains(attrName)) {
-																			namespaces.add(attrName);
-																			fakeRoot.setAttribute(attrName,
-																					ele.getAttribute(attrName));
-																		}
-																	}
-																}
-															}
-														}
-														fakeRoot.setAttribute("xmlns:lightray",
-																"http://schemas.aerialworks.ddns.net/lightray");
-														fakeRoot.setAttribute("lightray:fakerootelement", "true");
-														newDoc.appendChild(fakeRoot);
-														lst = original.getChildNodes();
-														for (int i = 0; i < lst.getLength(); i++) {
-															Node node = lst.item(i);
-															if (node instanceof Element
-																	&& ((Element) node)
-																			.hasAttribute("lightray:fakerootelement")
-																	&& ((Element) node)
-																			.getAttribute("lightray:fakerootelement")
-																			.equals("true")) {
-
-																// Get from old fake root
-																Element oldRoot = (Element) node;
-																lst = oldRoot.getChildNodes();
-																for (int i2 = 0; i2 < lst.getLength(); i2++) {
-																	node = lst.item(i2);
-																	fakeRoot.appendChild(newDoc.importNode(node, true));
-																}
-
-																break;
-															}
-															fakeRoot.appendChild(newDoc.importNode(node, true));
-														}
-														lst = merge.getChildNodes();
-														for (int i = 0; i < lst.getLength(); i++) {
-															Node node = lst.item(i);
-															fakeRoot.appendChild(newDoc.importNode(node, true));
-														}
-
-														// Write
-														FileOutputStream strm = new FileOutputStream(out);
-														TransformerFactory transformerFactory = TransformerFactory
-																.newInstance();
-														Transformer transformer = transformerFactory.newTransformer();
-														transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
-														transformer.setOutputProperty(OutputKeys.INDENT, "yes");
-														DOMSource source = new DOMSource(newDoc);
-														StreamResult result = new StreamResult(strm);
-														transformer.transform(source, result);
-														strm.close();
-													}
-												}
-											}
-										} else {
-											FileOutputStream strm = new FileOutputStream(out);
-											archive.getInputStream(ent).transferTo(strm);
-											strm.close();
-										}
-									}
-								}
-								if (ents.hasMoreElements())
-									ent = ents.nextElement();
-								else
-									ent = null;
-							}
-							archive.close();
-
-							// Determine type
-							if (entry.type == PatchEntryType.TRANSFORMER) {
-								ProgressWindow.WindowLogger.log("Cleaning transformer files from " + entry.name);
-								ZipInputStream strm = new ZipInputStream(new FileInputStream(mod));
-								pool.addSource(mod);
-								pool.importArchive(strm);
-								strm.close();
-
-								// Check classes
-								for (ClassNode node : pool.getLoadedClasses()) {
-									if (AnnotationInfo.isAnnotationPresent(FluidTransformer.class, node)) {
-										new File("lightray-work/classes/" + node.name + ".class").delete();
-										ProgressWindow.WindowLogger.log("  Removed " + node.name + ".class");
-									}
-								}
-							}
-						}
-						ProgressWindow.WindowLogger.log("Done.");
-
-						// Apply patchers
-						ProgressWindow.WindowLogger.log("Applying patchers...");
-						ProgressWindow.WindowLogger.setMax(mPatchers);
-						ProgressWindow.WindowLogger.setValue(0);
-						for (ILightrayPatcher patcher : patchers) {
-							ProgressWindow.WindowLogger.log("  Running patcher: " + patcher.getClass().getTypeName());
-							try {
-								patcher.apply(textField.getText(), new File("lightray-work"), modFiles,
-										new File("lightray-work/mods"), pool);
-							} catch (Throwable e) {
-								ProgressWindow.WindowLogger.setLabel("Fatal error");
-								ProgressWindow.WindowLogger
-										.log("Error: " + e.getClass().getTypeName() + ": " + e.getMessage());
-								for (StackTraceElement el : e.getStackTrace())
-									ProgressWindow.WindowLogger.log("    At: " + el);
-								ProgressWindow.WindowLogger
-										.fatalError("Modification failure!\nFailed to apply patcher: "
-												+ patcher.getClass().getTypeName() + "\n\nException: "
-												+ e.getClass().getTypeName() + ": " + e.getMessage());
-								return;
-							}
-							ProgressWindow.WindowLogger.increaseProgress();
-						}
-						ProgressWindow.WindowLogger.log("Generating mod resource manifest..");
-						JsonArray arr = new JsonArray();
-						for (String resource : modFiles) {
-							arr.add(resource);
-							ProgressWindow.WindowLogger.log("  Indexed " + resource);
-						}
-						modFiles.add("assets/lightray-resources.json");
-						new File("lightray-work/mods/assets").mkdirs();
-						Files.writeString(Path.of("lightray-work/mods/assets/lightray-resources.json"), arr.toString());
-						ProgressWindow.WindowLogger.log("Done.");
-
-						// Init FLUID
-						ProgressWindow.WindowLogger.log("Initializing FLUID..");
-						Fluid.openFluidLoader();
-						Fluid.registerAllTransformersFrom(pool);
-						Fluid.closeFluidLoader();
-						Transformers.initialize();
-						for (URL u : pool.getURLSources()) {
-							Transformers.addClassSource(u);
-						}
-						ProgressWindow.WindowLogger.log("Done.");
-
-						// Apply modifications
-						ProgressWindow.WindowLogger.log("");
-						ProgressWindow.WindowLogger.log("Creating modified APK...");
-						ProgressWindow.WindowLogger.setLabel("Creating modified APK...");
-						FileOutputStream outp = new FileOutputStream("lightray-work/apks/base.modified.apk");
-						ZipOutputStream zipO = new ZipOutputStream(outp);
-						archive = new ZipFile(textField.getText());
-
-						// Update files
-						ProgressWindow.WindowLogger.log("Updating files...");
-						int modC = 0;
-						for (String file : modFiles) {
-							if (archive.getEntry(file) == null)
-								modC++;
-						}
-						ProgressWindow.WindowLogger.setMax(archive.size() + modC);
-						ProgressWindow.WindowLogger.setValue(0);
-						Enumeration<? extends ZipEntry> ents = archive.entries();
-						ZipEntry ent = ents.nextElement();
-						ArrayList<String> existingEntries = new ArrayList<String>();
-						while (ent != null) {
-							existingEntries.add(ent.getName());
-							ProgressWindow.WindowLogger.log("  Updating " + ent.getName());
-
-							// Check if its a AXML resource
-							if ((ent.getName().endsWith(".xml") || ent.getName().endsWith(".axml"))
-									&& !ent.getName().startsWith("assets/") && !ent.getName().startsWith("/assets/")) {
-								try {
-									// Decode original axml
-									new File("lightray-work/axml/" + ent.getName()).getParentFile().mkdirs();
-									new File("lightray-work/axml-dump/" + ent.getName()).getParentFile().mkdirs();
-									File f = new File("lightray-work/axml/" + ent.getName());
-									if (!f.exists()) {
-										// Save current
-										FileOutputStream strmO = new FileOutputStream(f);
-										archive.getInputStream(ent).transferTo(strmO);
-										strmO.close();
-									}
-
-									// Decode
-									FileInputStream inp = new FileInputStream(f);
-									Document doc = parseAXML(inp);
-									inp.close();
-
-									// Dump
-									DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-									dbf.setNamespaceAware(false);
-									DocumentBuilder db = dbf.newDocumentBuilder();
-									Document newDoc = db.newDocument();
-									NodeList lst = doc.getChildNodes();
-									for (int i = 0; i < lst.getLength(); i++) {
-										Node node = lst.item(i);
-										newDoc.appendChild(newDoc.importNode(node, true));
-									}
-									FileOutputStream strm = new FileOutputStream(
-											new File("lightray-work/axml-dump/" + ent.getName()));
-									TransformerFactory transformerFactory = TransformerFactory.newInstance();
-									Transformer transformer = transformerFactory.newTransformer();
-									transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
-									transformer.setOutputProperty(OutputKeys.INDENT, "yes");
-									DOMSource source = new DOMSource(newDoc);
-									StreamResult result = new StreamResult(strm);
-									transformer.transform(source, result);
-									strm.close();
-								} catch (Exception e) {
-									// NO
-									// Library is unstable lets not crash
-								}
-							}
-
-							// Handle
-							InputStream entStrm = archive.getInputStream(ent);
-							if (!ent.isDirectory()) {
-								if (modFiles.contains(ent.getName())) {
-									ProgressWindow.WindowLogger.log("  Mod install " + ent.getName());
-
-									// Check if its a AXML resource
-									if ((ent.getName().endsWith(".xml") || ent.getName().endsWith(".axml"))
-											&& !ent.getName().startsWith("assets/")
-											&& !ent.getName().startsWith("/assets/")) {
-										// Decode original axml
-										File f = new File("lightray-work/axml/" + ent.getName());
-										FileInputStream inp = new FileInputStream(f);
-										Document doc = parseAXML(inp);
-										inp.close();
-
-										// Prepare
-										DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-										dbf.setNamespaceAware(false);
-										DocumentBuilder db = dbf.newDocumentBuilder();
-										Document newDoc = db.newDocument();
-
-										// Import original
-										NodeList lst = doc.getChildNodes();
-										for (int i = 0; i < lst.getLength(); i++) {
-											// Add node
-											Node node = lst.item(i);
-											newDoc.appendChild(newDoc.importNode(node, true));
-										}
-
-										// Read doc with data to merge
-										Document modDoc = db.parse(new File("lightray-work/mods/" + ent.getName()));
-										lst = modDoc.getChildNodes();
-										for (int i = 0; i < lst.getLength(); i++) {
-											Node node = lst.item(i);
-											if (node instanceof Element) {
-												Element ele = (Element) node;
-												if (ele.hasAttribute("lightray:fakerootelement") && ele
-														.getAttribute("lightray:fakerootelement").equals("true")) {
-													// This was a fakeroot, means there are stack-loaded mods editing
-													// the same XML
-													lst = ele.getChildNodes();
-													for (int i2 = 0; i2 < lst.getLength(); i2++) {
-														node = lst.item(i2);
-
-														// Override attributes
-														if (node instanceof Element) {
-															Element nd = (Element) node;
-															NamedNodeMap attrs = ele.getAttributes();
-															for (int i3 = 0; i3 < attrs.getLength(); i3++) {
-																String attrName = attrs.item(i3).getNodeName();
-																if (!attrName.startsWith("lightray:"))
-																	nd.setAttribute(attrName,
-																			ele.getAttribute(attrName));
-															}
-														}
-
-														applyXMLTransformer(node, newDoc, newDoc);
-													}
-													break;
-												}
-											}
-
-											// Override attributes
-											if (node instanceof Element) {
-												Element nd = (Element) node;
-												NamedNodeMap attrs = node.getAttributes();
-												for (int i3 = 0; i3 < attrs.getLength(); i3++) {
-													String attrName = attrs.item(i3).getNodeName();
-													if (!attrName.startsWith("lightray:"))
-														nd.setAttribute(attrName, nd.getAttribute(attrName));
-												}
-											}
-
-											applyXMLTransformer(node, newDoc, newDoc);
-										}
-
-										// Dump modified
-										new File("lightray-work/axml-mod/" + ent.getName()).getParentFile().mkdirs();
-
-										// Dump
-										FileOutputStream strm = new FileOutputStream(
-												new File("lightray-work/axml-mod/" + ent.getName()));
-										TransformerFactory transformerFactory = TransformerFactory.newInstance();
-										Transformer transformer = transformerFactory.newTransformer();
-										transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
-										transformer.setOutputProperty(OutputKeys.INDENT, "yes");
-										DOMSource source = new DOMSource(newDoc);
-										StreamResult result = new StreamResult(strm);
-										transformer.transform(source, result);
-										strm.close();
-
-										// Recompile
-										new File("lightray-work/axml-mod-bin/" + ent.getName()).getParentFile()
-												.mkdirs();
-										compileBinaryXML(new File("lightray-work/axml-mod-bin/" + ent.getName()),
-												newDoc);
-
-										// Swap streams
-										entStrm.close();
-										ZipEntry newEnt = new ZipEntry(ent.getName());
-										zipO.putNextEntry(newEnt);
-										entStrm = new FileInputStream("lightray-work/axml-mod-bin/" + ent.getName());
-										modFiles.remove(ent.getName());
-									} else {
-										// Swap streams
-										entStrm.close();
-										ZipEntry newEnt = new ZipEntry(ent.getName());
-										if (ent.getName().equals("resources.arsc")
-												|| ent.getName().equals("/resources.arsc")) {
-											File file = new File("lightray-work/mods/" + ent.getName());
-											newEnt.setMethod(ZipEntry.STORED);
-											newEnt.setCrc(computeCrc(file));
-											newEnt.setSize(file.length());
-											newEnt.setCompressedSize(file.length());
-										}
-										zipO.putNextEntry(newEnt);
-										entStrm = new FileInputStream("lightray-work/mods/" + ent.getName());
-										modFiles.remove(ent.getName());
-									}
-								} else if (ent.getName().endsWith(".dex")
-										&& (patches.stream().anyMatch(t -> t.type == PatchEntryType.TRANSFORMER))) {
-									// Edit classes
-									ProgressWindow.WindowLogger.log("  Processing classes...");
-									ProgressWindow.WindowLogger.setLabel("Processing classes...");
-									ProgressWindow.WindowLogger.log("    Running dex2jar...");
-									FileOutputStream strmO = new FileOutputStream("lightray-work/" + ent.getName());
-									String fName = ent.getName().substring(0, ent.getName().lastIndexOf(".dex"));
-									entStrm.transferTo(strmO);
-									strmO.close();
-									entStrm.close();
-
-									// Scan libs
-									String jvm = ProcessHandle.current().info().command().get();
-									String libs = "";
-									for (File lib : new File("dex2jar/lib")
-											.listFiles(t -> t.getName().endsWith(".jar"))) {
-										if (libs.isEmpty())
-											libs = "../dex2jar/lib/" + lib.getName();
-										else
-											libs += File.pathSeparator + "../dex2jar/lib/" + lib.getName();
-									}
-									ProcessBuilder builder = new ProcessBuilder(jvm, "-cp", libs,
-											"com.googlecode.dex2jar.tools.Dex2jarCmd", ent.getName());
-									builder.directory(new File("lightray-work"));
-									builder.redirectInput(Redirect.PIPE);
-									builder.redirectOutput(Redirect.PIPE);
-									builder.redirectError(Redirect.PIPE);
-									Process proc = builder.start();
-									ProgressWindow.WindowLogger.log("      [DEX2JAR] "
-											+ new String(proc.getInputStream().readAllBytes(), "UTF-8").trim()
-													.replace("\r", "").replace("\n", "\n      [DEX2JAR] "));
-									ProgressWindow.WindowLogger.log("      [DEX2JAR] "
-											+ new String(proc.getErrorStream().readAllBytes(), "UTF-8").trim()
-													.replace("\r", "").replace("\n", "\n      [DEX2JAR] "));
-									proc.waitFor();
-									if (proc.exitValue() != 0)
-										throw new Exception("Non-zero exit code for dex2jar!\n\n"
-												+ "This is most commonly caused by a incompatible java environment.\n\n"
-												+ "Try updating your Java installation or try another version of it.\n\n"
-												+ "Exit code: " + proc.exitValue());
-									ProgressWindow.WindowLogger.log("    Extracting classes...");
-									ZipFile archive2 = new ZipFile("lightray-work/" + fName + "-dex2jar.jar");
-									new File("lightray-work/" + fName).mkdirs();
-									Enumeration<? extends ZipEntry> ents2 = archive2.entries();
-									ZipEntry ent2 = ents2.nextElement();
-									while (ent2 != null) {
-										File out = new File("lightray-work/" + fName, ent2.getName());
-										if (!out.exists()) { // Check if it exists, if it does its a patcher overriding
-																// it
-											ProgressWindow.WindowLogger.log("      Extracting " + ent2.getName());
-											if (ent2.isDirectory()) {
-												out.mkdirs();
-											} else {
-												out.getParentFile().mkdirs();
-												FileOutputStream strm = new FileOutputStream(out);
-												archive2.getInputStream(ent2).transferTo(strm);
-												strm.close();
-											}
-										}
-										if (ents2.hasMoreElements())
-											ent2 = ents2.nextElement();
-										else
-											ent2 = null;
-									}
-									archive2.close();
-									ProgressWindow.WindowLogger.log("    Patching classes...");
-									ProgressWindow.WindowLogger.setLabel("    Patching classes...");
-
-									// Patch classes
-									File jar = new File("lightray-work/" + fName + "-dex2jar.jar");
-									pool.addSource(jar);
-									Transformers.addClassSource(jar);
-									patchClasses(new File("lightray-work/" + fName), "");
-
-									// Re-zip
-									ProgressWindow.WindowLogger.log("    Zipping classes...");
-									FileOutputStream outF = new FileOutputStream("lightray-work/" + fName + ".jar");
-									ZipOutputStream clJar = new ZipOutputStream(outF);
-									zipAll(new File("lightray-work/" + fName), "", clJar);
-									clJar.close();
-									outF.close();
-
-									// Run dx
-									ProgressWindow.WindowLogger.log("    Running dx...");
-									builder = new ProcessBuilder(jvm, "-cp", libs, "com.android.dx.command.Main",
-											"--dex", "--no-strict", "--min-sdk-version", minSdk, "--output",
-											fName + "-patched.dex", fName + ".jar");
-									builder.directory(new File("lightray-work"));
-									builder.redirectInput(Redirect.PIPE);
-									builder.redirectOutput(Redirect.PIPE);
-									builder.redirectError(Redirect.PIPE);
-									proc = builder.start();
-									ProgressWindow.WindowLogger.log(
-											"      [DX] " + new String(proc.getInputStream().readAllBytes(), "UTF-8")
-													.trim().replace("\r", "").replace("\n", "\n      [DX] "));
-									ProgressWindow.WindowLogger.log(
-											"      [DX] " + new String(proc.getErrorStream().readAllBytes(), "UTF-8")
-													.trim().replace("\r", "").replace("\n", "\n      [DX] "));
-									proc.waitFor();
-									if (proc.exitValue() != 0)
-										throw new Exception("Non-zero exit code for dx!\n\n"
-												+ "This is most commonly caused by a incompatible java environment.\n\n"
-												+ "Try updating your Java installation or try another version of it.\n\n"
-												+ "Exit code: " + proc.exitValue());
-
-									// Done
-									zipO.putNextEntry(new ZipEntry(ent.getName()));
-									entStrm = new FileInputStream("lightray-work/" + fName + "-patched.dex");
-									ProgressWindow.WindowLogger.setLabel("Creating modified APK...");
-								} else
-									zipO.putNextEntry(ent);
-								entStrm.transferTo(zipO);
-								entStrm.close();
-							} else {
-								zipO.putNextEntry(new ZipEntry(ent.getName()));
-								if (modFiles.contains(ent.getName()))
-									modFiles.remove(ent.getName());
-							}
-							zipO.closeEntry();
-							if (ents.hasMoreElements())
-								ent = ents.nextElement();
-							else
-								ent = null;
-							ProgressWindow.WindowLogger.increaseProgress();
-						}
-
-						// Add other files
-						ProgressWindow.WindowLogger.log("Adding remaining files...");
-						for (String file : new ArrayList<String>(modFiles)) {
-							if (existingEntries.contains(file) || file.endsWith("/")) {
-								ProgressWindow.WindowLogger.increaseProgress();
-								continue;// Skip
-							}
-							existingEntries.add(file);
-							ent = new ZipEntry(file);
-							ProgressWindow.WindowLogger.log("  Updating " + ent.getName());
-							zipO.putNextEntry(ent);
-							if (!file.endsWith("/")) {
-								// Compile XAML
-								boolean compSuccess = false;
-								if (!file.startsWith("/assets/") && !file.startsWith("assets/")
-										&& (file.endsWith(".axml") || file.endsWith(".xml"))) {
-									try {
-										// Prepare to read
-										DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-										dbf.setNamespaceAware(false);
-										DocumentBuilder db = dbf.newDocumentBuilder();
-										Document original = null;
-
-										// Read
-										InputStream entStrm = new FileInputStream(
-												"lightray-work/mods/" + ent.getName());
-										original = db.parse(entStrm);
-										entStrm.close();
-
-										// Recompile
-										new File("lightray-work/axml-mod-bin/" + ent.getName()).getParentFile()
-												.mkdirs();
-										compileBinaryXML(new File("lightray-work/axml-mod-bin/" + ent.getName()),
-												original);
-
-										// Write
-										entStrm = new FileInputStream("lightray-work/axml-mod-bin/" + ent.getName());
-										modFiles.remove(ent.getName());
-										entStrm.transferTo(zipO);
-										entStrm.close();
-									} catch (Exception e) {
-
-									}
-								}
-
-								if (!compSuccess) {
-									// Write
-									InputStream entStrm = new FileInputStream("lightray-work/mods/" + ent.getName());
-									modFiles.remove(ent.getName());
-									entStrm.transferTo(zipO);
-									entStrm.close();
-								}
-							}
-							zipO.closeEntry();
-							ProgressWindow.WindowLogger.increaseProgress();
-						}
-
-						// Clean
-						archive.close();
-						zipO.close();
-						outp.close();
-
-						// Align apk
-						ProgressWindow.WindowLogger.log("");
-						ProgressWindow.WindowLogger.log("Creating aligned APK...");
-						ProgressWindow.WindowLogger.setLabel("Creating aligned APK...");
-						File zipalignFile = new File(
-								"buildtools/build-tools/zipalign" + (platformString().equals("windows") ? ".exe" : ""));
-						if (!platformString().equals("windows")) {
-							try {
-								Runtime.getRuntime()
-										.exec(new String[] { "chmod", "755", "buildtools/build-tools/zipalign" })
-										.waitFor();
-							} catch (Exception e) {
-							}
-						}
-						ProcessBuilder builder = new ProcessBuilder(zipalignFile.getCanonicalPath(), "-fv", "4",
-								"base.modified.apk", "base.modified.aligned.apk");
-						builder.directory(new File("lightray-work/apks"));
-						builder.redirectInput(Redirect.PIPE);
-						builder.redirectOutput(Redirect.PIPE);
-						builder.redirectError(Redirect.PIPE);
-						Process proc = builder.start();
-						ProgressWindow.WindowLogger.log(new String(proc.getInputStream().readAllBytes(), "UTF-8").trim()
-								.replace("\r", "").replace("\n", "\n    [ZIPALIGN] "));
-						ProgressWindow.WindowLogger.log(new String(proc.getErrorStream().readAllBytes(), "UTF-8").trim()
-								.replace("\r", "").replace("\n", "\n    [ZIPALIGN] "));
-						proc.waitFor();
-						if (proc.exitValue() != 0)
-							throw new Exception("Non-zero exit code for ZIPALIGN!\n\n"
-									+ "This is most commonly caused by a incompatible java environment.\n\n"
-									+ "Try updating your Java installation or try another version of it.\n\n"
-									+ "Exit code: " + proc.exitValue());
-
-						// Sign apk
-						ProgressWindow.WindowLogger.log("");
-						ProgressWindow.WindowLogger.log("Signing APK...");
-						ProgressWindow.WindowLogger.setLabel("Signing APK...");
-						File signApk = new File("buildtools/build-tools/apksigner"
-								+ (platformString().equals("windows") ? ".bat" : ""));
-						if (!platformString().equals("windows")) {
-							try {
-								Runtime.getRuntime()
-										.exec(new String[] { "chmod", "755", "buildtools/build-tools/apksigner" })
-										.waitFor();
-							} catch (Exception e) {
-							}
-						}
-						builder = new ProcessBuilder(signApk.getCanonicalPath(), "sign", "--verbose", "--ks",
-								"../../keystore.jks", "base.modified.aligned.apk");
-						builder.directory(new File("lightray-work/apks"));
-						builder.redirectInput(Redirect.PIPE);
-						builder.redirectOutput(Redirect.PIPE);
-						builder.redirectError(Redirect.PIPE);
-						proc = builder.start();
-						proc.getOutputStream().write("appmod\n".getBytes());
-						proc.getOutputStream().close();
-						ProgressWindow.WindowLogger.log(new String(proc.getInputStream().readAllBytes(), "UTF-8").trim()
-								.replace("\r", "").replace("\n", "\n    [APKSIGNER] "));
-						ProgressWindow.WindowLogger.log(new String(proc.getErrorStream().readAllBytes(), "UTF-8").trim()
-								.replace("\r", "").replace("\n", "\n    [APKSIGNER] "));
-						proc.waitFor();
-						if (proc.exitValue() != 0)
-							throw new Exception("Non-zero exit code for APKSIGNER!\n\n"
-									+ "This is most commonly caused by a incompatible java environment.\n\n"
-									+ "Try updating your Java installation or try another version of it.\n\n"
-									+ "Exit code: " + proc.exitValue());
-						ProgressWindow.WindowLogger.log("Moving apk...");
-						new File("lightray-work/apks/base.modified.aligned.apk")
-								.renameTo(new File("lightray-work/apks/base.modified.signed.apk"));
-
-						// Copy final result
-						ProgressWindow.WindowLogger.log("Copying final APK...");
-						File baseAPK = new File(textField.getText());
-						File out = new File(baseAPK.getParentFile(),
-								baseAPK.getName().substring(0, baseAPK.getName().lastIndexOf(".")) + " (patched).apk");
-						Files.copy(Path.of("lightray-work/apks/base.modified.signed.apk"), out.toPath(),
-								StandardCopyOption.REPLACE_EXISTING);
-
-						// Complete
-						ProgressWindow.WindowLogger.log("");
-						ProgressWindow.WindowLogger.log("Completed! Modifications applied successfully!");
-						ProgressWindow.WindowLogger.setLabel("Modifications applied successfully!");
+						File inputFile = new File(textField.getText());
+						File out = new File(inputFile.getParentFile(),
+								inputFile.getName().substring(0, inputFile.getName().lastIndexOf("."))
+										+ " (patched).apk");
+						apply(inputFile, out);
 						JOptionPane.showMessageDialog(ProgressWindow.WindowLogger.frame.frm,
 								"Success!\nSaved at: '" + out.getAbsolutePath()
 										+ "'\n\nThe application has been modified, this program will now close.",
@@ -1244,6 +435,955 @@ public class MainWindow {
 		recurseAddKeyHandler(frmLightray);
 	}
 
+	private static void apply(File inputFile, File outputFile) throws Exception {
+		// Parse input
+		ZipFile archive = new ZipFile(inputFile);
+		Document androidManifestDom = parseAXML(archive.getInputStream(archive.getEntry("AndroidManifest.xml")));
+		archive.close();
+
+		// Pull API version
+		Element manifestRoot = androidManifestDom.getDocumentElement();
+		Element sdkVersion = (Element) manifestRoot.getElementsByTagName("uses-sdk").item(0);
+		String minSdk = sdkVersion.getAttribute("android:minSdkVersion");
+		String targetSdk = sdkVersion.getAttribute("android:targetSdkVersion");
+
+		// Pull app info
+		String pkg = manifestRoot.getAttribute("package");
+		String appVerCode = manifestRoot.getAttribute("android:versionCode");
+		String appVerName = manifestRoot.getAttribute("android:versionName");
+		ProgressWindow.WindowLogger.log("Application: " + pkg + " " + appVerName + " (build " + appVerCode + ")");
+		ProgressWindow.WindowLogger.log("Target SDK: " + targetSdk + ", minimal SDK: " + minSdk);
+		ProgressWindow.WindowLogger.log("");
+
+		// Prepare directories
+		ProgressWindow.WindowLogger.setLabel("Preparing files...");
+		ProgressWindow.WindowLogger.log("Creating temporary directories...");
+		if (new File("lightray-work").exists())
+			deleteDir(new File("lightray-work"));
+		new File("lightray-work/mods").mkdirs();
+		new File("lightray-work/apks").mkdirs();
+		ProgressWindow.WindowLogger.log("Done.");
+
+		// Download dex2jar
+		if (!new File("dex2jar/complete").exists()) {
+			ProgressWindow.WindowLogger.log("");
+			ProgressWindow.WindowLogger.log("Downloading dex2jar... (note this package is owned by pxb1988)");
+			ProgressWindow.WindowLogger.setLabel("Downloading dex2jar...");
+			downloadFile("lightray-work/dex2jar.zip", dex2jarDownload);
+			ProgressWindow.WindowLogger.log("Extracting dex2jar...");
+			extractFile("lightray-work/dex2jar.zip", "lightray-work");
+			ProgressWindow.WindowLogger.log("Moving dex2jar...");
+			new File("lightray-work/" + dex2jarInnerFolder).renameTo(new File("dex2jar"));
+			new File("dex2jar/complete").createNewFile();
+		}
+
+		// Download build tools
+		if (!new File("buildtools/complete").exists()) {
+			if (new File("buildtools").exists())
+				deleteDir(new File("buildtools"));
+			new File("buildtools").mkdirs();
+			ProgressWindow.WindowLogger.log("");
+			ProgressWindow.WindowLogger
+					.log("Downloading Android Build Tools... (note this package is owned by google)");
+			ProgressWindow.WindowLogger.setLabel("Downloading Android Build Tools...");
+			downloadFile("lightray-work/buildtools/build-tools.zip",
+					"https://dl.google.com/android/repository/build-tools_r33-" + platformString() + ".zip");
+			ProgressWindow.WindowLogger.log("Extracting buildtools...");
+			extractFile("lightray-work/buildtools/build-tools.zip", "lightray-work/buildtools/build-tools-ext");
+			ProgressWindow.WindowLogger.log("Moving buildtools...");
+			new File("lightray-work/buildtools/build-tools-ext/android-13")
+					.renameTo(new File("buildtools/build-tools"));
+			deleteDir(new File("lightray-work/buildtools"));
+			new File("buildtools/complete").createNewFile();
+		}
+
+		// Create keystore
+		if (!new File("keystore.jks").exists()) {
+			ProgressWindow.WindowLogger.log("");
+			ProgressWindow.WindowLogger.log("Generating keystore...");
+			ProgressWindow.WindowLogger.setLabel("Generating keystore...");
+			String home = System.getProperty("java.home");
+			File keytoolFile = new File(home, "bin/keytool");
+			ProcessBuilder builder = new ProcessBuilder(keytoolFile.getPath(), "-genkey", "-v", "-keystore",
+					"keystore.jks", "-alias", "appmod", "-sigalg", "SHA256withRSA", "-keyalg", "RSA", "-keysize",
+					"2048", "-validity", "7300");
+			builder.redirectInput(Redirect.PIPE);
+			builder.redirectOutput(Redirect.PIPE);
+			builder.redirectError(Redirect.PIPE);
+			Process proc = builder.start();
+			proc.getOutputStream().write("appmod\nappmod\n\n\n\n\n\n\nyes".getBytes());
+			proc.getOutputStream().close();
+			ProgressWindow.WindowLogger.log(new String(proc.getInputStream().readAllBytes(), "UTF-8").trim()
+					.replace("\r", "").replace("\n", "\n    [KEYTOOL] "));
+			ProgressWindow.WindowLogger.log(new String(proc.getErrorStream().readAllBytes(), "UTF-8").trim()
+					.replace("\r", "").replace("\n", "\n    [KEYTOOL] "));
+			proc.waitFor();
+			if (proc.exitValue() != 0)
+				throw new Exception("Non-zero exit code for KEYTOOL.");
+		}
+
+		// Discover mods
+		ProgressWindow.WindowLogger.log("");
+		ProgressWindow.WindowLogger.log("Discovering modifications...");
+		ProgressWindow.WindowLogger.setLabel("Discovering modifications...");
+
+		// Gather active mods
+		int max = 0;
+		int mPatchers = 0;
+		ArrayList<PatchEntry> patches = new ArrayList<PatchEntry>();
+		ArrayList<ILightrayPatcher> patchers = new ArrayList<ILightrayPatcher>();
+		ArrayList<String> modFiles = new ArrayList<String>();
+		for (PatchEntry patch : MainWindow.patches.values()) {
+			if (patch.enabled) {
+				ProgressWindow.WindowLogger
+						.log("Discovered enabled modification: " + patch.name + ", type: " + patch.type);
+				if (patch.type == PatchEntryType.PATCHER) {
+					mPatchers += MainWindow.patchers.get(patch.name).size();
+					patchers.addAll(MainWindow.patchers.get(patch.name));
+				} else {
+					max++;
+					patches.add(patch);
+				}
+			}
+		}
+
+		// Load libraries
+		File libsDir = new File("libs");
+		libsDir.mkdirs();
+		FluidClassPool pool = FluidClassPool.create();
+		ProgressWindow.WindowLogger.log("Loading libraries...");
+		ProgressWindow.WindowLogger.setLabel("Loading libraries...");
+		if (libs == null)
+			loadLibs(libsDir, pool);
+		else {
+			// Load libraries from arguments
+			for (File m : libs) {
+				pool.addSource(m);
+				ProgressWindow.WindowLogger.log("  Added: " + m.getName());
+			}
+		}
+
+		// Load modifications
+		ProgressWindow.WindowLogger.setMax(max);
+		ProgressWindow.WindowLogger.setValue(0);
+		ProgressWindow.WindowLogger.log("Loading modifications...");
+		ProgressWindow.WindowLogger.setLabel("Loading modifications...");
+		ProgressWindow.WindowLogger.log("Extracting mod resources...");
+		for (PatchEntry entry : patches) {
+			// Extract resources
+			ProgressWindow.WindowLogger.log("Applying files from " + entry.name);
+			new File("lightray-work/mods").mkdirs();
+			archive = new ZipFile(entry.file);
+			ProgressWindow.WindowLogger.setMax(archive.size());
+			Enumeration<? extends ZipEntry> ents = archive.entries();
+			ZipEntry ent = ents.nextElement();
+			while (ent != null) {
+				ProgressWindow.WindowLogger.log("  Extracting " + ent.getName());
+				modFiles.add(ent.getName());
+				File out = new File("lightray-work/mods", ent.getName());
+				if (ent.isDirectory()) {
+					out.mkdirs();
+				} else {
+					if (ent.getName().endsWith(".class")) {
+						// Copy file
+						File outp = new File("lightray-work/classes/" + ent.getName());
+						outp.getParentFile().mkdirs();
+						FileOutputStream strm = new FileOutputStream(outp);
+						archive.getInputStream(ent).transferTo(strm);
+						strm.close();
+						modFiles.remove(ent.getName());
+					} else {
+						out.getParentFile().mkdirs();
+						if ((out.getName().endsWith(".xml") || out.getName().endsWith(".axml"))
+								&& !ent.getName().startsWith("assets/") && !ent.getName().startsWith("/assets/")) {
+							if (!out.exists()) {
+								// If needed, decompile the AXML
+								try {
+									Document original = parseAXML(archive.getInputStream(ent));
+
+									// Write
+									DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+									dbf.setNamespaceAware(false);
+									DocumentBuilder db = dbf.newDocumentBuilder();
+									Document newDoc = db.newDocument();
+									NodeList lst = original.getChildNodes();
+									for (int i = 0; i < lst.getLength(); i++) {
+										Node node = lst.item(i);
+										newDoc.appendChild(newDoc.importNode(node, true));
+									}
+									FileOutputStream strm = new FileOutputStream(out);
+									TransformerFactory transformerFactory = TransformerFactory.newInstance();
+									Transformer transformer = transformerFactory.newTransformer();
+									transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
+									transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+									DOMSource source = new DOMSource(newDoc);
+									StreamResult result = new StreamResult(strm);
+									transformer.transform(source, result);
+									strm.close();
+								} catch (Exception e) {
+									// Not AXML
+									FileOutputStream strm = new FileOutputStream(out);
+									archive.getInputStream(ent).transferTo(strm);
+									strm.close();
+								}
+							} else {
+								// Merge documents
+								DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+								dbf.setNamespaceAware(false);
+								DocumentBuilder db = dbf.newDocumentBuilder();
+								Document original = null;
+								try {
+									original = db.parse(archive.getInputStream(ent));
+								} catch (Exception e) {
+									// Probably compiled XML, decompile it
+									try {
+										original = parseAXML(archive.getInputStream(ent));
+									} catch (Exception e2) {
+										// Lets bail out-
+										FileOutputStream strm = new FileOutputStream(out);
+										archive.getInputStream(ent).transferTo(strm);
+										strm.close();
+									}
+								}
+								if (original != null) {
+									Document merge = null;
+									try {
+										merge = db.parse(archive.getInputStream(ent));
+									} catch (Exception e) {
+										// Probably compiled XML, decompile it
+										merge = parseAXML(archive.getInputStream(ent));
+									}
+									if (merge != null) {
+										Document newDoc = db.newDocument();
+										Element fakeRoot = newDoc.createElement("lightrayxmlinjectroot");
+										// Collect namespaces
+										ArrayList<String> namespaces = new ArrayList<String>();
+										namespaces.add("xmlns:lightray");
+										NodeList lst = original.getChildNodes();
+										for (int i = 0; i < lst.getLength(); i++) {
+											Node node = lst.item(i);
+											if (node instanceof Element) {
+												Element ele = (Element) node;
+												NamedNodeMap attrs = ele.getAttributes();
+												for (int i2 = 0; i2 < attrs.getLength(); i2++) {
+													String attrName = attrs.item(i2).getNodeName();
+													if (attrName.startsWith("xmlns:")) {
+														if (!namespaces.contains(attrName)) {
+															namespaces.add(attrName);
+															fakeRoot.setAttribute(attrName, ele.getAttribute(attrName));
+														}
+													}
+												}
+											}
+										}
+										fakeRoot.setAttribute("xmlns:lightray",
+												"http://schemas.aerialworks.ddns.net/lightray");
+										fakeRoot.setAttribute("lightray:fakerootelement", "true");
+										newDoc.appendChild(fakeRoot);
+										lst = original.getChildNodes();
+										for (int i = 0; i < lst.getLength(); i++) {
+											Node node = lst.item(i);
+											if (node instanceof Element
+													&& ((Element) node).hasAttribute("lightray:fakerootelement")
+													&& ((Element) node).getAttribute("lightray:fakerootelement")
+															.equals("true")) {
+
+												// Get from old fake root
+												Element oldRoot = (Element) node;
+												lst = oldRoot.getChildNodes();
+												for (int i2 = 0; i2 < lst.getLength(); i2++) {
+													node = lst.item(i2);
+													fakeRoot.appendChild(newDoc.importNode(node, true));
+												}
+
+												break;
+											}
+											fakeRoot.appendChild(newDoc.importNode(node, true));
+										}
+										lst = merge.getChildNodes();
+										for (int i = 0; i < lst.getLength(); i++) {
+											Node node = lst.item(i);
+											fakeRoot.appendChild(newDoc.importNode(node, true));
+										}
+
+										// Write
+										FileOutputStream strm = new FileOutputStream(out);
+										TransformerFactory transformerFactory = TransformerFactory.newInstance();
+										Transformer transformer = transformerFactory.newTransformer();
+										transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
+										transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+										DOMSource source = new DOMSource(newDoc);
+										StreamResult result = new StreamResult(strm);
+										transformer.transform(source, result);
+										strm.close();
+									}
+								}
+							}
+						} else {
+							FileOutputStream strm = new FileOutputStream(out);
+							archive.getInputStream(ent).transferTo(strm);
+							strm.close();
+						}
+					}
+				}
+				if (ents.hasMoreElements())
+					ent = ents.nextElement();
+				else
+					ent = null;
+			}
+			archive.close();
+
+			// Determine type
+			if (entry.type == PatchEntryType.TRANSFORMER) {
+				ProgressWindow.WindowLogger.log("Cleaning transformer files from " + entry.name);
+				ZipInputStream strm = new ZipInputStream(new FileInputStream(entry.file));
+				pool.addSource(entry.file);
+				pool.importArchive(strm);
+				strm.close();
+
+				// Check classes
+				for (ClassNode node : pool.getLoadedClasses()) {
+					if (AnnotationInfo.isAnnotationPresent(FluidTransformer.class, node)) {
+						new File("lightray-work/classes/" + node.name + ".class").delete();
+						ProgressWindow.WindowLogger.log("  Removed " + node.name + ".class");
+					}
+				}
+			}
+		}
+		ProgressWindow.WindowLogger.log("Done.");
+
+		// Apply patchers
+		ProgressWindow.WindowLogger.log("Applying patchers...");
+		ProgressWindow.WindowLogger.setMax(mPatchers);
+		ProgressWindow.WindowLogger.setValue(0);
+		for (ILightrayPatcher patcher : patchers) {
+			ProgressWindow.WindowLogger.log("  Running patcher: " + patcher.getClass().getTypeName());
+			try {
+				patcher.apply(inputFile.getPath(), new File("lightray-work"), modFiles, new File("lightray-work/mods"),
+						pool);
+			} catch (Throwable e) {
+				ProgressWindow.WindowLogger.setLabel("Fatal error");
+				ProgressWindow.WindowLogger.log("Error: " + e.getClass().getTypeName() + ": " + e.getMessage());
+				for (StackTraceElement el : e.getStackTrace())
+					ProgressWindow.WindowLogger.log("    At: " + el);
+				ProgressWindow.WindowLogger.fatalError(
+						"Modification failure!\nFailed to apply patcher: " + patcher.getClass().getTypeName()
+								+ "\n\nException: " + e.getClass().getTypeName() + ": " + e.getMessage());
+				return;
+			}
+			ProgressWindow.WindowLogger.increaseProgress();
+		}
+		ProgressWindow.WindowLogger.log("Generating mod resource manifest..");
+		JsonArray arr = new JsonArray();
+		for (String resource : modFiles) {
+			arr.add(resource);
+			ProgressWindow.WindowLogger.log("  Indexed " + resource);
+		}
+		modFiles.add("assets/lightray-resources.json");
+		new File("lightray-work/mods/assets").mkdirs();
+		Files.writeString(Path.of("lightray-work/mods/assets/lightray-resources.json"), arr.toString());
+		ProgressWindow.WindowLogger.log("Done.");
+
+		// Init FLUID
+		ProgressWindow.WindowLogger.log("Initializing FLUID..");
+		Fluid.openFluidLoader();
+		Fluid.registerAllTransformersFrom(pool);
+		Fluid.closeFluidLoader();
+		Transformers.initialize();
+		for (URL u : pool.getURLSources()) {
+			Transformers.addClassSource(u);
+		}
+		ProgressWindow.WindowLogger.log("Done.");
+
+		// Apply modifications
+		ProgressWindow.WindowLogger.log("");
+		ProgressWindow.WindowLogger.log("Creating modified APK...");
+		ProgressWindow.WindowLogger.setLabel("Creating modified APK...");
+		FileOutputStream outp = new FileOutputStream("lightray-work/apks/base.modified.apk");
+		ZipOutputStream zipO = new ZipOutputStream(outp);
+		archive = new ZipFile(inputFile);
+
+		// Update files
+		ProgressWindow.WindowLogger.log("Updating files...");
+		int modC = 0;
+		for (String file : modFiles) {
+			if (archive.getEntry(file) == null)
+				modC++;
+		}
+		ProgressWindow.WindowLogger.setMax(archive.size() + modC);
+		ProgressWindow.WindowLogger.setValue(0);
+		Enumeration<? extends ZipEntry> ents = archive.entries();
+		ZipEntry ent = ents.nextElement();
+		ArrayList<String> existingEntries = new ArrayList<String>();
+		while (ent != null) {
+			existingEntries.add(ent.getName());
+			ProgressWindow.WindowLogger.log("  Updating " + ent.getName());
+
+			// Check if its a AXML resource
+			if ((ent.getName().endsWith(".xml") || ent.getName().endsWith(".axml"))
+					&& !ent.getName().startsWith("assets/") && !ent.getName().startsWith("/assets/")) {
+				try {
+					// Decode original axml
+					new File("lightray-work/axml/" + ent.getName()).getParentFile().mkdirs();
+					new File("lightray-work/axml-dump/" + ent.getName()).getParentFile().mkdirs();
+					File f = new File("lightray-work/axml/" + ent.getName());
+					if (!f.exists()) {
+						// Save current
+						FileOutputStream strmO = new FileOutputStream(f);
+						archive.getInputStream(ent).transferTo(strmO);
+						strmO.close();
+					}
+
+					// Decode
+					FileInputStream inp = new FileInputStream(f);
+					Document doc = parseAXML(inp);
+					inp.close();
+
+					// Dump
+					DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+					dbf.setNamespaceAware(false);
+					DocumentBuilder db = dbf.newDocumentBuilder();
+					Document newDoc = db.newDocument();
+					NodeList lst = doc.getChildNodes();
+					for (int i = 0; i < lst.getLength(); i++) {
+						Node node = lst.item(i);
+						newDoc.appendChild(newDoc.importNode(node, true));
+					}
+					FileOutputStream strm = new FileOutputStream(new File("lightray-work/axml-dump/" + ent.getName()));
+					TransformerFactory transformerFactory = TransformerFactory.newInstance();
+					Transformer transformer = transformerFactory.newTransformer();
+					transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
+					transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+					DOMSource source = new DOMSource(newDoc);
+					StreamResult result = new StreamResult(strm);
+					transformer.transform(source, result);
+					strm.close();
+				} catch (Exception e) {
+					// NO
+					// Library is unstable lets not crash
+				}
+			}
+
+			// Handle
+			InputStream entStrm = archive.getInputStream(ent);
+			if (!ent.isDirectory()) {
+				if (modFiles.contains(ent.getName())) {
+					ProgressWindow.WindowLogger.log("  Mod install " + ent.getName());
+
+					// Check if its a AXML resource
+					if ((ent.getName().endsWith(".xml") || ent.getName().endsWith(".axml"))
+							&& !ent.getName().startsWith("assets/") && !ent.getName().startsWith("/assets/")) {
+						// Decode original axml
+						File f = new File("lightray-work/axml/" + ent.getName());
+						FileInputStream inp = new FileInputStream(f);
+						Document doc = parseAXML(inp);
+						inp.close();
+
+						// Prepare
+						DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+						dbf.setNamespaceAware(false);
+						DocumentBuilder db = dbf.newDocumentBuilder();
+						Document newDoc = db.newDocument();
+
+						// Import original
+						NodeList lst = doc.getChildNodes();
+						for (int i = 0; i < lst.getLength(); i++) {
+							// Add node
+							Node node = lst.item(i);
+							newDoc.appendChild(newDoc.importNode(node, true));
+						}
+
+						// Read doc with data to merge
+						Document modDoc = db.parse(new File("lightray-work/mods/" + ent.getName()));
+						lst = modDoc.getChildNodes();
+						for (int i = 0; i < lst.getLength(); i++) {
+							Node node = lst.item(i);
+							if (node instanceof Element) {
+								Element ele = (Element) node;
+								if (ele.hasAttribute("lightray:fakerootelement")
+										&& ele.getAttribute("lightray:fakerootelement").equals("true")) {
+									// This was a fakeroot, means there are stack-loaded mods editing
+									// the same XML
+									lst = ele.getChildNodes();
+									for (int i2 = 0; i2 < lst.getLength(); i2++) {
+										node = lst.item(i2);
+
+										// Override attributes
+										if (node instanceof Element) {
+											Element nd = (Element) node;
+											NamedNodeMap attrs = ele.getAttributes();
+											for (int i3 = 0; i3 < attrs.getLength(); i3++) {
+												String attrName = attrs.item(i3).getNodeName();
+												if (!attrName.startsWith("lightray:"))
+													nd.setAttribute(attrName, ele.getAttribute(attrName));
+											}
+										}
+
+										applyXMLTransformer(node, newDoc, newDoc);
+									}
+									break;
+								}
+							}
+
+							// Override attributes
+							if (node instanceof Element) {
+								Element nd = (Element) node;
+								NamedNodeMap attrs = node.getAttributes();
+								for (int i3 = 0; i3 < attrs.getLength(); i3++) {
+									String attrName = attrs.item(i3).getNodeName();
+									if (!attrName.startsWith("lightray:"))
+										nd.setAttribute(attrName, nd.getAttribute(attrName));
+								}
+							}
+
+							applyXMLTransformer(node, newDoc, newDoc);
+						}
+
+						// Dump modified
+						new File("lightray-work/axml-mod/" + ent.getName()).getParentFile().mkdirs();
+
+						// Dump
+						FileOutputStream strm = new FileOutputStream(
+								new File("lightray-work/axml-mod/" + ent.getName()));
+						TransformerFactory transformerFactory = TransformerFactory.newInstance();
+						Transformer transformer = transformerFactory.newTransformer();
+						transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
+						transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+						DOMSource source = new DOMSource(newDoc);
+						StreamResult result = new StreamResult(strm);
+						transformer.transform(source, result);
+						strm.close();
+
+						// Recompile
+						new File("lightray-work/axml-mod-bin/" + ent.getName()).getParentFile().mkdirs();
+						compileBinaryXML(new File("lightray-work/axml-mod-bin/" + ent.getName()), newDoc);
+
+						// Swap streams
+						entStrm.close();
+						ZipEntry newEnt = new ZipEntry(ent.getName());
+						zipO.putNextEntry(newEnt);
+						entStrm = new FileInputStream("lightray-work/axml-mod-bin/" + ent.getName());
+						modFiles.remove(ent.getName());
+					} else {
+						// Swap streams
+						entStrm.close();
+						ZipEntry newEnt = new ZipEntry(ent.getName());
+						if (ent.getName().equals("resources.arsc") || ent.getName().equals("/resources.arsc")) {
+							File file = new File("lightray-work/mods/" + ent.getName());
+							newEnt.setMethod(ZipEntry.STORED);
+							newEnt.setCrc(computeCrc(file));
+							newEnt.setSize(file.length());
+							newEnt.setCompressedSize(file.length());
+						}
+						zipO.putNextEntry(newEnt);
+						entStrm = new FileInputStream("lightray-work/mods/" + ent.getName());
+						modFiles.remove(ent.getName());
+					}
+				} else if (ent.getName().endsWith(".dex")
+						&& (patches.stream().anyMatch(t -> t.type == PatchEntryType.TRANSFORMER))) {
+					// Edit classes
+					ProgressWindow.WindowLogger.log("  Processing classes...");
+					ProgressWindow.WindowLogger.setLabel("Processing classes...");
+					ProgressWindow.WindowLogger.log("    Running dex2jar...");
+					FileOutputStream strmO = new FileOutputStream("lightray-work/" + ent.getName());
+					String fName = ent.getName().substring(0, ent.getName().lastIndexOf(".dex"));
+					entStrm.transferTo(strmO);
+					strmO.close();
+					entStrm.close();
+
+					// Scan libs
+					String jvm = ProcessHandle.current().info().command().get();
+					String libs = "";
+					for (File lib : new File("dex2jar/lib").listFiles(t -> t.getName().endsWith(".jar"))) {
+						if (libs.isEmpty())
+							libs = "../dex2jar/lib/" + lib.getName();
+						else
+							libs += File.pathSeparator + "../dex2jar/lib/" + lib.getName();
+					}
+					ProcessBuilder builder = new ProcessBuilder(jvm, "-cp", libs,
+							"com.googlecode.dex2jar.tools.Dex2jarCmd", ent.getName());
+					builder.directory(new File("lightray-work"));
+					builder.redirectInput(Redirect.PIPE);
+					builder.redirectOutput(Redirect.PIPE);
+					builder.redirectError(Redirect.PIPE);
+					Process proc = builder.start();
+					ProgressWindow.WindowLogger
+							.log("      [DEX2JAR] " + new String(proc.getInputStream().readAllBytes(), "UTF-8").trim()
+									.replace("\r", "").replace("\n", "\n      [DEX2JAR] "));
+					ProgressWindow.WindowLogger
+							.log("      [DEX2JAR] " + new String(proc.getErrorStream().readAllBytes(), "UTF-8").trim()
+									.replace("\r", "").replace("\n", "\n      [DEX2JAR] "));
+					proc.waitFor();
+					if (proc.exitValue() != 0)
+						throw new Exception("Non-zero exit code for dex2jar!\n\n"
+								+ "This is most commonly caused by a incompatible java environment.\n\n"
+								+ "Try updating your Java installation or try another version of it.\n\n"
+								+ "Exit code: " + proc.exitValue());
+					ProgressWindow.WindowLogger.log("    Extracting classes...");
+					ZipFile archive2 = new ZipFile("lightray-work/" + fName + "-dex2jar.jar");
+					new File("lightray-work/" + fName).mkdirs();
+					Enumeration<? extends ZipEntry> ents2 = archive2.entries();
+					ZipEntry ent2 = ents2.nextElement();
+					while (ent2 != null) {
+						File out = new File("lightray-work/" + fName, ent2.getName());
+						if (!out.exists()) { // Check if it exists, if it does its a patcher overriding
+												// it
+							ProgressWindow.WindowLogger.log("      Extracting " + ent2.getName());
+							if (ent2.isDirectory()) {
+								out.mkdirs();
+							} else {
+								out.getParentFile().mkdirs();
+								FileOutputStream strm = new FileOutputStream(out);
+								archive2.getInputStream(ent2).transferTo(strm);
+								strm.close();
+							}
+						}
+						if (ents2.hasMoreElements())
+							ent2 = ents2.nextElement();
+						else
+							ent2 = null;
+					}
+					archive2.close();
+					ProgressWindow.WindowLogger.log("    Patching classes...");
+					ProgressWindow.WindowLogger.setLabel("    Patching classes...");
+
+					// Patch classes
+					File jar = new File("lightray-work/" + fName + "-dex2jar.jar");
+					pool.addSource(jar);
+					Transformers.addClassSource(jar);
+					patchClasses(new File("lightray-work/" + fName), "");
+
+					// Re-zip
+					ProgressWindow.WindowLogger.log("    Zipping classes...");
+					FileOutputStream outF = new FileOutputStream("lightray-work/" + fName + ".jar");
+					ZipOutputStream clJar = new ZipOutputStream(outF);
+					zipAll(new File("lightray-work/" + fName), "", clJar);
+					clJar.close();
+					outF.close();
+
+					// Run dx
+					ProgressWindow.WindowLogger.log("    Running dx...");
+					builder = new ProcessBuilder(jvm, "-cp", libs, "com.android.dx.command.Main", "--dex",
+							"--no-strict", "--min-sdk-version", minSdk, "--output", fName + "-patched.dex",
+							fName + ".jar");
+					builder.directory(new File("lightray-work"));
+					builder.redirectInput(Redirect.PIPE);
+					builder.redirectOutput(Redirect.PIPE);
+					builder.redirectError(Redirect.PIPE);
+					proc = builder.start();
+					ProgressWindow.WindowLogger
+							.log("      [DX] " + new String(proc.getInputStream().readAllBytes(), "UTF-8").trim()
+									.replace("\r", "").replace("\n", "\n      [DX] "));
+					ProgressWindow.WindowLogger
+							.log("      [DX] " + new String(proc.getErrorStream().readAllBytes(), "UTF-8").trim()
+									.replace("\r", "").replace("\n", "\n      [DX] "));
+					proc.waitFor();
+					if (proc.exitValue() != 0)
+						throw new Exception("Non-zero exit code for dx!\n\n"
+								+ "This is most commonly caused by a incompatible java environment.\n\n"
+								+ "Try updating your Java installation or try another version of it.\n\n"
+								+ "Exit code: " + proc.exitValue());
+
+					// Done
+					zipO.putNextEntry(new ZipEntry(ent.getName()));
+					entStrm = new FileInputStream("lightray-work/" + fName + "-patched.dex");
+					ProgressWindow.WindowLogger.setLabel("Creating modified APK...");
+				} else
+					zipO.putNextEntry(ent);
+				entStrm.transferTo(zipO);
+				entStrm.close();
+			} else {
+				zipO.putNextEntry(new ZipEntry(ent.getName()));
+				if (modFiles.contains(ent.getName()))
+					modFiles.remove(ent.getName());
+			}
+			zipO.closeEntry();
+			if (ents.hasMoreElements())
+				ent = ents.nextElement();
+			else
+				ent = null;
+			ProgressWindow.WindowLogger.increaseProgress();
+		}
+
+		// Add other files
+		ProgressWindow.WindowLogger.log("Adding remaining files...");
+		for (String file : new ArrayList<String>(modFiles)) {
+			if (existingEntries.contains(file) || file.endsWith("/")) {
+				ProgressWindow.WindowLogger.increaseProgress();
+				continue;// Skip
+			}
+			existingEntries.add(file);
+			ent = new ZipEntry(file);
+			ProgressWindow.WindowLogger.log("  Updating " + ent.getName());
+			zipO.putNextEntry(ent);
+			if (!file.endsWith("/")) {
+				// Compile XAML
+				boolean compSuccess = false;
+				if (!file.startsWith("/assets/") && !file.startsWith("assets/")
+						&& (file.endsWith(".axml") || file.endsWith(".xml"))) {
+					try {
+						// Prepare to read
+						DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+						dbf.setNamespaceAware(false);
+						DocumentBuilder db = dbf.newDocumentBuilder();
+						Document original = null;
+
+						// Read
+						InputStream entStrm = new FileInputStream("lightray-work/mods/" + ent.getName());
+						original = db.parse(entStrm);
+						entStrm.close();
+
+						// Recompile
+						new File("lightray-work/axml-mod-bin/" + ent.getName()).getParentFile().mkdirs();
+						compileBinaryXML(new File("lightray-work/axml-mod-bin/" + ent.getName()), original);
+
+						// Write
+						entStrm = new FileInputStream("lightray-work/axml-mod-bin/" + ent.getName());
+						modFiles.remove(ent.getName());
+						entStrm.transferTo(zipO);
+						entStrm.close();
+					} catch (Exception e) {
+
+					}
+				}
+
+				if (!compSuccess) {
+					// Write
+					InputStream entStrm = new FileInputStream("lightray-work/mods/" + ent.getName());
+					modFiles.remove(ent.getName());
+					entStrm.transferTo(zipO);
+					entStrm.close();
+				}
+			}
+			zipO.closeEntry();
+			ProgressWindow.WindowLogger.increaseProgress();
+		}
+
+		// Clean
+		archive.close();
+		zipO.close();
+		outp.close();
+
+		// Align apk
+		ProgressWindow.WindowLogger.log("");
+		ProgressWindow.WindowLogger.log("Creating aligned APK...");
+		ProgressWindow.WindowLogger.setLabel("Creating aligned APK...");
+		File zipalignFile = new File(
+				"buildtools/build-tools/zipalign" + (platformString().equals("windows") ? ".exe" : ""));
+		if (!platformString().equals("windows")) {
+			try {
+				Runtime.getRuntime().exec(new String[] { "chmod", "755", "buildtools/build-tools/zipalign" }).waitFor();
+			} catch (Exception e) {
+			}
+		}
+		ProcessBuilder builder = new ProcessBuilder(zipalignFile.getCanonicalPath(), "-fv", "4", "base.modified.apk",
+				"base.modified.aligned.apk");
+		builder.directory(new File("lightray-work/apks"));
+		builder.redirectInput(Redirect.PIPE);
+		builder.redirectOutput(Redirect.PIPE);
+		builder.redirectError(Redirect.PIPE);
+		Process proc = builder.start();
+		ProgressWindow.WindowLogger.log(new String(proc.getInputStream().readAllBytes(), "UTF-8").trim()
+				.replace("\r", "").replace("\n", "\n    [ZIPALIGN] "));
+		ProgressWindow.WindowLogger.log(new String(proc.getErrorStream().readAllBytes(), "UTF-8").trim()
+				.replace("\r", "").replace("\n", "\n    [ZIPALIGN] "));
+		proc.waitFor();
+		if (proc.exitValue() != 0)
+			throw new Exception("Non-zero exit code for ZIPALIGN!\n\n"
+					+ "This is most commonly caused by a incompatible java environment.\n\n"
+					+ "Try updating your Java installation or try another version of it.\n\n" + "Exit code: "
+					+ proc.exitValue());
+
+		// Sign apk
+		ProgressWindow.WindowLogger.log("");
+		ProgressWindow.WindowLogger.log("Signing APK...");
+		ProgressWindow.WindowLogger.setLabel("Signing APK...");
+		File signApk = new File(
+				"buildtools/build-tools/apksigner" + (platformString().equals("windows") ? ".bat" : ""));
+		if (!platformString().equals("windows")) {
+			try {
+				Runtime.getRuntime().exec(new String[] { "chmod", "755", "buildtools/build-tools/apksigner" })
+						.waitFor();
+			} catch (Exception e) {
+			}
+		}
+		builder = new ProcessBuilder(signApk.getCanonicalPath(), "sign", "--verbose", "--ks", "../../keystore.jks",
+				"base.modified.aligned.apk");
+		builder.directory(new File("lightray-work/apks"));
+		builder.redirectInput(Redirect.PIPE);
+		builder.redirectOutput(Redirect.PIPE);
+		builder.redirectError(Redirect.PIPE);
+		proc = builder.start();
+		proc.getOutputStream().write("appmod\n".getBytes());
+		proc.getOutputStream().close();
+		ProgressWindow.WindowLogger.log(new String(proc.getInputStream().readAllBytes(), "UTF-8").trim()
+				.replace("\r", "").replace("\n", "\n    [APKSIGNER] "));
+		ProgressWindow.WindowLogger.log(new String(proc.getErrorStream().readAllBytes(), "UTF-8").trim()
+				.replace("\r", "").replace("\n", "\n    [APKSIGNER] "));
+		proc.waitFor();
+		if (proc.exitValue() != 0)
+			throw new Exception("Non-zero exit code for APKSIGNER!\n\n"
+					+ "This is most commonly caused by a incompatible java environment.\n\n"
+					+ "Try updating your Java installation or try another version of it.\n\n" + "Exit code: "
+					+ proc.exitValue());
+		ProgressWindow.WindowLogger.log("Moving apk...");
+		new File("lightray-work/apks/base.modified.aligned.apk")
+				.renameTo(new File("lightray-work/apks/base.modified.signed.apk"));
+
+		// Copy final result
+		ProgressWindow.WindowLogger.log("Copying final APK...");
+		Files.copy(Path.of("lightray-work/apks/base.modified.signed.apk"), outputFile.toPath(),
+				StandardCopyOption.REPLACE_EXISTING);
+
+		// Complete
+		ProgressWindow.WindowLogger.log("");
+		ProgressWindow.WindowLogger.log("Completed! Modifications applied successfully!");
+		ProgressWindow.WindowLogger.setLabel("Modifications applied successfully!");
+	}
+
+	private static void buildFromCli(String[] args) {
+		// Parse arguments
+		boolean ignorePatched = false;
+		File sourceFile = null;
+		File destFile = null;
+		ArrayList<File> patches = new ArrayList<File>();
+		libs = new ArrayList<File>();
+		for (int i = 0; i < args.length; i++) {
+			// Handle
+			String arg = args[i];
+			if (arg.equalsIgnoreCase("--apk-source")) {
+				if (i + 1 < args.length) {
+					// Assign source
+					sourceFile = new File(args[i + 1]);
+
+					// Skip next
+					i++;
+				}
+			} else if (arg.equalsIgnoreCase("--apk-dest")) {
+				if (i + 1 < args.length) {
+					// Assign destination
+					destFile = new File(args[i + 1]);
+
+					// Skip next
+					i++;
+				}
+			} else if (arg.equalsIgnoreCase("--add-patch")) {
+				if (i + 1 < args.length) {
+					// Add patch file
+					for (String a : args[i + 1].split(File.pathSeparator)) {
+						File patch = new File(a);
+						if (patch.exists())
+							patches.add(patch);
+					}
+
+					// Skip next
+					i++;
+				}
+			} else if (arg.equalsIgnoreCase("--add-lib")) {
+				if (i + 1 < args.length) {
+					// Add lib file
+					for (String a : args[i + 1].split(File.pathSeparator)) {
+						File lib = new File(a);
+						if (lib.exists())
+							libs.add(lib);
+					}
+
+					// Skip next
+					i++;
+				}
+			} else if (arg.equalsIgnoreCase("--ignore-patched")) {
+				ignorePatched = true;
+			}
+		}
+
+		// Check source
+		if (sourceFile == null || !sourceFile.exists() || !sourceFile.isFile()) {
+			if (sourceFile == null)
+				System.err.println("Missing '--apk-source' argument");
+			else
+				System.err.println("Invalid value for '--apk-source', expected a apk file");
+			System.exit(1);
+		}
+
+		// Check destination
+		if (destFile == null)
+			destFile = new File(sourceFile.getParentFile(),
+					sourceFile.getName().substring(0, sourceFile.getName().lastIndexOf(".")) + " (patched).apk");
+		else if (destFile.getParentFile() != null && !destFile.getParentFile().exists()) {
+			System.err.println("Invalid value for '--apk-dest', parent path does not exist");
+			System.exit(1);
+		}
+
+		// Log
+		System.out.println("AerialWorks LightrayInjector loading...");
+		System.out.println("Source file: " + sourceFile.getAbsolutePath());
+		System.out.println("Destination file: " + destFile.getAbsolutePath());
+		System.out.println();
+
+		// Check archive
+		try {
+			System.out.println("Verifying archive...");
+			ZipFile archive = new ZipFile(sourceFile);
+			boolean isAndroid = archive.getEntry("AndroidManifest.xml") != null;
+			boolean wasModified = archive.getEntry("assets/lightray-resources.json") != null;
+			archive.close();
+			if (!isAndroid) {
+				System.err.println("Invalid APK file, please select a Android APK file.\n\nFile " + sourceFile.getName()
+						+ " does not contain a android app manifest!");
+				System.exit(1);
+				return;
+			}
+			if (wasModified) {
+				if (ignorePatched) {
+					// Warn
+					System.err.println();
+					System.err.println(
+							"WARNING!\n\nIt is highly recommended to NOT use already-patched APK files else things WILL break!\n\n"
+									+ "If any issues occur make sure to use a unpatched APK before reporting!");
+					System.err.println();
+				} else {
+					// Fail
+					System.err.println();
+					System.err.println(
+							"It is highly recommended to NOT use already-patched APK files else things WILL break!\n"
+									+ "Any old mod resources in the APK will no longer function correctly if you proceed!\n"
+									+ "If there were any transformers applied, they will remain in the APK, beware of duplicate transformers!\n\n"
+									+ "If you wish to proceed, add '--ignore-patched' to the command arguments");
+					System.err.println();
+					System.exit(1);
+				}
+			}
+		} catch (Exception e) {
+			System.err.println(
+					"Invalid APK file, please select a Android APK file.\n\nCould not read " + sourceFile.getName());
+			System.exit(1);
+		}
+
+		// Load modifications
+		System.out.println("Loading patches..");
+		for (File patch : patches) {
+			System.out.println("  Loading patch: " + patch);
+			PatchEntry e = loadMod(patch, patch.getParentFile() == null ? "" : patch.getParentFile().getPath() + "/",
+					false);
+			e.enabled = true;
+		}
+
+		// Start patcher
+		try {
+			System.out.println("Starting LightrayInjector...");
+			System.out.println("");
+			apply(sourceFile, destFile);
+			System.out.println("Saved at: '" + destFile.getAbsolutePath());
+		} catch (Throwable e) {
+			ProgressWindow.WindowLogger.log("Error: " + e.getClass().getTypeName() + ": " + e.getMessage());
+			for (StackTraceElement el : e.getStackTrace())
+				ProgressWindow.WindowLogger.log("    At: " + el);
+			ProgressWindow.WindowLogger.fatalError(
+					"Modification failure!\nException: " + e.getClass().getTypeName() + ": " + e.getMessage());
+			System.exit(1);
+		}
+	}
+
 	private void recurseAddKeyHandler(Component comp) {
 		comp.addKeyListener(new KeyAdapter() {
 			@Override
@@ -1265,7 +1405,7 @@ public class MainWindow {
 		}
 	}
 
-	private void loadLibs(File libs, FluidClassPool pool) {
+	private static void loadLibs(File libs, FluidClassPool pool) {
 		// Scan folder
 		for (File m : libs.listFiles()) {
 			if (m.isDirectory())
@@ -1283,11 +1423,11 @@ public class MainWindow {
 			if (m.isDirectory())
 				scan(m, pref + m.getName() + "/");
 			else if (m.getName().endsWith(".jar") || m.getName().endsWith(".zip"))
-				loadMod(m, pref);
+				loadMod(m, pref, true);
 		}
 	}
 
-	private void patchClasses(File dir, String pref) throws IOException {
+	private static void patchClasses(File dir, String pref) throws IOException {
 		// Scan folder
 		for (File m : dir.listFiles()) {
 			if (m.isDirectory())
@@ -1297,7 +1437,7 @@ public class MainWindow {
 		}
 	}
 
-	private void patchClass(File classFile, String pref) throws IOException {
+	private static void patchClass(File classFile, String pref) throws IOException {
 		String className = pref + classFile.getName().substring(0, classFile.getName().lastIndexOf(".class"));
 
 		// Apply patch
@@ -1310,7 +1450,7 @@ public class MainWindow {
 		}
 	}
 
-	private void zipAll(File dir, String pref, ZipOutputStream zOut) throws IOException {
+	private static void zipAll(File dir, String pref, ZipOutputStream zOut) throws IOException {
 		// Zip folder
 		for (File m : dir.listFiles()) {
 			if (m.isDirectory()) {
@@ -1332,9 +1472,10 @@ public class MainWindow {
 		}
 	}
 
-	private void loadMod(File mod, String pref) {
+	private static PatchEntry loadMod(File mod, String pref, boolean windowed) {
 		// Load mod
 		PatchEntry patch = new PatchEntry();
+		patch.file = mod;
 		patch.name = pref + mod.getName();
 		patch.type = PatchEntryType.RESOURCE;
 
@@ -1368,12 +1509,19 @@ public class MainWindow {
 							Class<?> cls = dynLoader.loadClass(node.name.replace("/", "."));
 							if (!ILightrayPatcher.class.isAssignableFrom(cls)) {
 								// Error, invalid type
-								JOptionPane.showMessageDialog(frmLightray,
-										"An error occured loading modification: " + patch.name + "\n" + "\n"
-												+ "Error: the patcher '" + cls.getTypeName()
-												+ "' does not inherit the ILightrayPatcher interface.",
-										"Error", JOptionPane.ERROR_MESSAGE);
-								return;
+								if (windowed) {
+									JOptionPane.showMessageDialog(winInst.frmLightray,
+											"An error occured loading modification: " + patch.name + "\n" + "\n"
+													+ "Error: the patcher '" + cls.getTypeName()
+													+ "' does not inherit the ILightrayPatcher interface.",
+											"Error", JOptionPane.ERROR_MESSAGE);
+								} else {
+									System.err.println("An error occured loading modification: " + patch.name + "\n"
+											+ "\n" + "Error: the patcher '" + cls.getTypeName()
+											+ "' does not inherit the ILightrayPatcher interface.");
+									System.exit(1);
+								}
+								return null;
 							}
 
 							// Create instance
@@ -1386,15 +1534,22 @@ public class MainWindow {
 			// Close pool
 			pool.close();
 		} catch (Exception e) {
-			JOptionPane.showMessageDialog(frmLightray,
-					"An error occured loading modification: " + patch.name + "\n" + "\n" + "Exception: " + e, "Error",
-					JOptionPane.ERROR_MESSAGE);
-			return;
+			if (windowed) {
+				JOptionPane.showMessageDialog(winInst.frmLightray,
+						"An error occured loading modification: " + patch.name + "\n" + "\n" + "Exception: " + e,
+						"Error", JOptionPane.ERROR_MESSAGE);
+			} else {
+				System.err.println(
+						"An error occured loading modification: " + patch.name + "\n" + "\n" + "Exception: " + e);
+				System.exit(1);
+			}
+			return null;
 		}
 		patch.box = new JCheckBox(mod.getName() + " (" + patch.type.toString().toLowerCase() + ")");
 
 		// Add
 		patches.put(patch.name, patch);
+		return patch;
 	}
 
 	private void saveModInfo() {
@@ -1413,7 +1568,7 @@ public class MainWindow {
 		}
 	}
 
-	private String platformString() {
+	private static String platformString() {
 		String info = System.getProperty("os.name").toLowerCase();
 		if (info.startsWith("windows"))
 			return "windows";
@@ -1426,7 +1581,7 @@ public class MainWindow {
 			return null;
 	}
 
-	private void deleteDir(File dir) {
+	private static void deleteDir(File dir) {
 		for (File d : dir.listFiles(t -> t.isDirectory()))
 			deleteDir(d);
 		for (File d : dir.listFiles(t -> !t.isDirectory()))
@@ -1434,7 +1589,7 @@ public class MainWindow {
 		dir.delete();
 	}
 
-	private void extractFile(String source, String output) throws IOException {
+	private static void extractFile(String source, String output) throws IOException {
 		new File(output).mkdirs();
 		ZipFile archive = new ZipFile(source);
 		ProgressWindow.WindowLogger.setMax(archive.size());
@@ -1468,7 +1623,7 @@ public class MainWindow {
 		ProgressWindow.WindowLogger.setValue(0);
 	}
 
-	private void downloadFile(String output, String url) throws IOException {
+	private static void downloadFile(String output, String url) throws IOException {
 		new File(output).getParentFile().mkdirs();
 		ProgressWindow.WindowLogger.log("Downloading " + url + " -> " + output + "...");
 		URLConnection strm = new URL(url).openConnection();
@@ -1483,7 +1638,7 @@ public class MainWindow {
 		ProgressWindow.WindowLogger.setValue(0);
 	}
 
-	private void download(URLConnection urlConnection, OutputStream output) throws IOException {
+	private static void download(URLConnection urlConnection, OutputStream output) throws IOException {
 		// Prepare
 		InputStream data = urlConnection.getInputStream();
 		ProgressWindow.WindowLogger.setMax(urlConnection.getContentLength() / 1000);
@@ -1505,7 +1660,7 @@ public class MainWindow {
 		data.close();
 	}
 
-	private void applyXMLTransformer(Node node, Node parent, Document doc) {
+	private static void applyXMLTransformer(Node node, Node parent, Document doc) {
 		if (node instanceof Element) {
 			Element ele = (Element) node;
 
@@ -1623,13 +1778,13 @@ public class MainWindow {
 		}
 	}
 
-	private void compileBinaryXML(File output, Document doc) throws IOException {
+	private static void compileBinaryXML(File output, Document doc) throws IOException {
 		FileOutputStream outputS = new FileOutputStream(output);
 		compileBinaryXML(outputS, doc);
 		outputS.close();
 	}
 
-	private void compileBinaryXML(FileOutputStream output, Document doc) throws IOException {
+	private static void compileBinaryXML(FileOutputStream output, Document doc) throws IOException {
 		// Create writer
 		AxmlWriter writer = new AxmlWriter();
 
@@ -1647,7 +1802,7 @@ public class MainWindow {
 		output.write(writer.toByteArray());
 	}
 
-	private void writeNode(Node node, AxmlVisitor parentRoot, HashMap<String, String> namespaces) {
+	private static void writeNode(Node node, AxmlVisitor parentRoot, HashMap<String, String> namespaces) {
 		// Add namespaces
 		if (node instanceof Element) {
 			Element ele = (Element) node;
@@ -1665,7 +1820,7 @@ public class MainWindow {
 		writeNode(node, (NodeVisitor) parentRoot, namespaces);
 	}
 
-	private void writeNode(Node node, NodeVisitor parent, HashMap<String, String> namespaces) {
+	private static void writeNode(Node node, NodeVisitor parent, HashMap<String, String> namespaces) {
 		// Create child
 		String name = node.getNodeName();
 		String ns = null;
@@ -1683,7 +1838,7 @@ public class MainWindow {
 		writeNodeContent(node, ch, namespaces);
 	}
 
-	private void writeNodeContent(Node node, NodeVisitor ch, HashMap<String, String> namespaces) {
+	private static void writeNodeContent(Node node, NodeVisitor ch, HashMap<String, String> namespaces) {
 		// Write element fields
 		if (node instanceof Element) {
 			Element ele = (Element) node;
@@ -1772,12 +1927,12 @@ public class MainWindow {
 		}
 	}
 
-	private Document parseAXML(InputStream inp) throws IOException, ParserConfigurationException {
+	private static Document parseAXML(InputStream inp) throws IOException, ParserConfigurationException {
 		AxmlReader reader = new AxmlReader(inp.readAllBytes());
 		return parseAxml(reader);
 	}
 
-	private Document parseAxml(AxmlReader reader) throws IOException, ParserConfigurationException {
+	private static Document parseAxml(AxmlReader reader) throws IOException, ParserConfigurationException {
 		// Create new document container
 		DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
 		dbf.setNamespaceAware(false);
@@ -1820,7 +1975,7 @@ public class MainWindow {
 		return newDoc;
 	}
 
-	private long computeCrc(File file) throws IOException {
+	private static long computeCrc(File file) throws IOException {
 		CRC32 crc = new CRC32();
 		FileInputStream in = new FileInputStream(file);
 		while (true) {
