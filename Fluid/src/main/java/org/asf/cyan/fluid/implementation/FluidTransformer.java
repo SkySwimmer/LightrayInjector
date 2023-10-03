@@ -464,9 +464,7 @@ public class FluidTransformer extends Transformer {
 					inode.var = addVarStart + varIndex;
 				}
 			}
-
-			if (!(node instanceof FrameNode))
-				newNodes.add(node);
+			newNodes.add(node);
 		}
 
 		boolean keepReturn = false;
@@ -625,7 +623,8 @@ public class FluidTransformer extends Transformer {
 						target.localVariables = Arrays.asList(mthLocalVars);
 					} else {
 						index = 0;
-						LocalVariableNode[] vars = new LocalVariableNode[target.localVariables.size() + mthLocalVars.length];
+						LocalVariableNode[] vars = new LocalVariableNode[target.localVariables.size()
+								+ mthLocalVars.length];
 						for (LocalVariableNode var : target.localVariables) {
 							if (var.index > addVarStart)
 								var.index += appendVarLength;
