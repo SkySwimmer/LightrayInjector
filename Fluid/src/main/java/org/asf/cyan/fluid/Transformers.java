@@ -171,11 +171,6 @@ public class Transformers {
 		}
 
 		if (!match && !transformerMatch) {
-			try {
-				pool.rewriteClass(classNameF, classfileBuffer);
-			} catch (ClassNotFoundException e) {
-				pool.readClass(classNameF, classfileBuffer);
-			}
 			return null;
 		}
 

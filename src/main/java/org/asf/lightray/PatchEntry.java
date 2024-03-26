@@ -11,5 +11,6 @@ public class PatchEntry {
 	public boolean enabled;
 	public JCheckBox box;
 	public PatchEntryType type;
+	public boolean preExtracted;
 
 }
