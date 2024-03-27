@@ -5,6 +5,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.MalformedURLException;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -131,6 +132,22 @@ public class FluidClassPool implements Closeable {
 	 */
 	public void addSource(File source) {
 		addSource(new FileClassSourceProvider(source));
+	}
+
+	/**
+	 * Adds sources based on class instances, finds the folder/jar containing the
+	 * class and adds it as a file
+	 * 
+	 * @param source Source class
+	 */
+	public void addSource(Class<?> source) {
+		URL u = source.getProtectionDomain().getCodeSource().getLocation();
+		try {
+			File sourceF = new File(u.toURI());
+			addSource(sourceF);
+		} catch (URISyntaxException e) {
+			addSource(u);
+		}
 	}
 
 	/**
