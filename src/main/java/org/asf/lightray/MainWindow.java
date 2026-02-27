@@ -32,13 +32,10 @@ import org.asf.cyan.fluid.Transformer.AnnotationInfo;
 import org.asf.cyan.fluid.api.FluidTransformer;
 import org.asf.cyan.fluid.bytecode.FluidClassPool;
 import org.objectweb.asm.tree.ClassNode;
-import org.w3c.dom.Comment;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
-import org.w3c.dom.NamedNodeMap;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
-import org.w3c.dom.Text;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -48,7 +45,6 @@ import com.google.gson.JsonSyntaxException;
 
 import pxb.android.axml.AxmlReader;
 import pxb.android.axml.AxmlVisitor;
-import pxb.android.axml.AxmlWriter;
 import pxb.android.axml.NodeVisitor;
 
 import javax.swing.JLabel;
@@ -73,8 +69,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
@@ -105,7 +103,7 @@ public class MainWindow {
 	private boolean shiftDown;
 	private static DynamicClassLoader dynLoader = new DynamicClassLoader();
 	private static HashMap<String, List<ILightrayPatcher>> patchers = new HashMap<String, List<ILightrayPatcher>>();
-	private static HashMap<String, PatchEntry> patches = new HashMap<String, PatchEntry>();
+	private static HashMap<String, PatchEntry> patches = new LinkedHashMap<String, PatchEntry>();
 	private static ArrayList<File> libs;
 
 	/**
@@ -328,10 +326,14 @@ public class MainWindow {
 				if (e.getKeyCode() == KeyEvent.VK_SPACE || e.getKeyCode() == KeyEvent.VK_ENTER) {
 					e.consume();
 					if (list.getSelectedValue() != null) {
+						// Update
 						PatchEntry entry = list.getSelectedValue();
-						entry.enabled = !entry.enabled;
-						entry.box.setEnabled(entry.enabled);
+						setEnabledRecursive(entry, !entry.enabled);
+
+						// Repaint
 						list.repaint();
+
+						// Save
 						saveModInfo();
 					}
 				}
@@ -342,10 +344,14 @@ public class MainWindow {
 				if (evt.getClickCount() == 1) {
 					int index = list.locationToIndex(evt.getPoint());
 					if (index >= 0 && index < patches.size()) {
+						// Update
 						PatchEntry entry = patches.values().toArray(new PatchEntry[0])[index];
-						entry.enabled = !entry.enabled;
-						entry.box.setEnabled(entry.enabled);
+						setEnabledRecursive(entry, !entry.enabled);
+
+						// Repaint
 						list.repaint();
+
+						// Save
 						saveModInfo();
 					}
 				}
@@ -378,7 +384,7 @@ public class MainWindow {
 		// Load modifications
 		File mods = new File("patches");
 		mods.mkdirs();
-		scan(mods, "");
+		scan(mods, "", null);
 		mods = new File("plainpatches");
 		mods.mkdirs();
 		scanPlain(mods);
@@ -437,6 +443,16 @@ public class MainWindow {
 		});
 		scrollPane.setViewportView(list);
 		recurseAddKeyHandler(frmLightray);
+	}
+
+	protected static void setEnabledRecursive(PatchEntry entry, boolean enabled) {
+		// Set state
+		entry.enabled = enabled;
+		entry.box.setEnabled(entry.enabled);
+
+		// Update
+		for (PatchEntry child : entry.childEntries)
+			setEnabledRecursive(child, enabled);
 	}
 
 	private static void apply(File inputFile, File outputFile) throws Exception {
@@ -517,10 +533,8 @@ public class MainWindow {
 			Process proc = builder.start();
 			proc.getOutputStream().write("appmod\nappmod\n\n\n\n\n\n\nyes".getBytes());
 			proc.getOutputStream().close();
-			ProgressWindow.WindowLogger.log(new String(proc.getInputStream().readAllBytes(), "UTF-8").trim()
-					.replace("\r", "").replace("\n", "\n    [KEYTOOL] "));
-			ProgressWindow.WindowLogger.log(new String(proc.getErrorStream().readAllBytes(), "UTF-8").trim()
-					.replace("\r", "").replace("\n", "\n    [KEYTOOL] "));
+			logAsyncFromStream(proc.getInputStream(), "	  [KEYTOOL] ");
+			logAsyncFromStream(proc.getErrorStream(), "	  [KEYTOOL] ");
 			proc.waitFor();
 			if (proc.exitValue() != 0)
 				throw new Exception("Non-zero exit code for KEYTOOL.");
@@ -541,7 +555,10 @@ public class MainWindow {
 			if (patch.enabled) {
 				ProgressWindow.WindowLogger
 						.log("Discovered enabled modification: " + patch.name + ", type: " + patch.type);
-				if (patch.type == PatchEntryType.PATCHER) {
+				if (patch.type == PatchEntryType.COLLECTION) {
+					max++;
+					patches.add(patch);
+				} else if (patch.type == PatchEntryType.PATCHER) {
 					mPatchers += MainWindow.patchers.get(patch.name).size();
 					patchers.addAll(MainWindow.patchers.get(patch.name));
 				} else {
@@ -557,9 +574,10 @@ public class MainWindow {
 		FluidClassPool pool = FluidClassPool.create();
 		ProgressWindow.WindowLogger.log("Loading libraries...");
 		ProgressWindow.WindowLogger.setLabel("Loading libraries...");
-		if (libs == null)
+		if (libs == null) {
+			libs = new ArrayList<File>();
 			loadLibs(libsDir, pool);
-		else {
+		} else {
 			// Load libraries from arguments
 			for (File m : libs) {
 				pool.addSource(m);
@@ -574,6 +592,10 @@ public class MainWindow {
 		ProgressWindow.WindowLogger.setLabel("Loading modifications...");
 		ProgressWindow.WindowLogger.log("Extracting mod resources...");
 		for (PatchEntry entry : patches) {
+			// Skip collections
+			if (entry.type == PatchEntryType.COLLECTION)
+				continue;
+
 			// Extract resources
 			ProgressWindow.WindowLogger.log("Applying files from " + entry.name);
 			new File("lightray-work/mods").mkdirs();
@@ -594,8 +616,17 @@ public class MainWindow {
 						out.mkdirs();
 					} else {
 						if (ent.getName().endsWith(".class")) {
+							// Check if entry specifies a specific class target
+							String nm = ent.getName().replace("\\", "/");
+							while (nm.startsWith("/"))
+								nm = nm.substring(1);
+							String output = "classes/" + nm;
+							if (nm.startsWith("dex/classes")) {
+								output = nm.substring(4);
+							}
+
 							// Copy file
-							File outp = new File("lightray-work/classes/" + ent.getName());
+							File outp = new File("lightray-work/" + output);
 							outp.getParentFile().mkdirs();
 							FileOutputStream strm = new FileOutputStream(outp);
 							archive.getInputStream(ent).transferTo(strm);
@@ -732,132 +763,43 @@ public class MainWindow {
 			existingEntries.add(ent.getName());
 			ProgressWindow.WindowLogger.log("  Updating " + ent.getName());
 
-			// Check if its a AXML resource
-			if ((ent.getName().endsWith(".xml") || ent.getName().endsWith(".axml"))
-					&& !ent.getName().startsWith("assets/") && !ent.getName().startsWith("/assets/")) {
-				try {
-					// Decode original axml
-					new File("lightray-work/axml/" + ent.getName()).getParentFile().mkdirs();
-					new File("lightray-work/axml-dump/" + ent.getName()).getParentFile().mkdirs();
-					File f = new File("lightray-work/axml/" + ent.getName());
-					if (!f.exists()) {
-						// Save current
-						FileOutputStream strmO = new FileOutputStream(f);
-						archive.getInputStream(ent).transferTo(strmO);
-						strmO.close();
-					}
-
-					// Decode
-					FileInputStream inp = new FileInputStream(f);
-					Document doc = parseAXML(inp);
-					inp.close();
-
-					// Dump
-					DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-					dbf.setNamespaceAware(false);
-					DocumentBuilder db = dbf.newDocumentBuilder();
-					Document newDoc = db.newDocument();
-					NodeList lst = doc.getChildNodes();
-					for (int i = 0; i < lst.getLength(); i++) {
-						Node node = lst.item(i);
-						newDoc.appendChild(newDoc.importNode(node, true));
-					}
-					FileOutputStream strm = new FileOutputStream(new File("lightray-work/axml-dump/" + ent.getName()));
-					TransformerFactory transformerFactory = TransformerFactory.newInstance();
-					Transformer transformer = transformerFactory.newTransformer();
-					transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
-					transformer.setOutputProperty(OutputKeys.INDENT, "yes");
-					DOMSource source = new DOMSource(newDoc);
-					StreamResult result = new StreamResult(strm);
-					transformer.transform(source, result);
-					strm.close();
-				} catch (Exception e) {
-					// NO
-					// Library is unstable lets not crash
-				}
-			}
-
 			// Handle
-			InputStream entStrm = archive.getInputStream(ent);
 			if (!ent.isDirectory()) {
-				if (modFiles.contains(ent.getName())) {
-					ProgressWindow.WindowLogger.log("  Mod install " + ent.getName());
+				InputStream entStrm = archive.getInputStream(ent);
 
-					// Check if its a AXML resource
-					if ((ent.getName().endsWith(".xml") || ent.getName().endsWith(".axml"))
-							&& !ent.getName().startsWith("assets/") && !ent.getName().startsWith("/assets/")) {
+				// Check if its a AXML resource, if so, dump
+				if ((ent.getName().endsWith(".xml") || ent.getName().endsWith(".axml"))
+						&& !ent.getName().startsWith("assets/") && !ent.getName().startsWith("/assets/")) {
+					try {
 						// Decode original axml
+						new File("lightray-work/axml/" + ent.getName()).getParentFile().mkdirs();
+						new File("lightray-work/axml-dump/" + ent.getName()).getParentFile().mkdirs();
 						File f = new File("lightray-work/axml/" + ent.getName());
+						if (!f.exists()) {
+							// Save current
+							FileOutputStream strmO = new FileOutputStream(f);
+							entStrm.transferTo(strmO);
+							strmO.close();
+							entStrm = new FileInputStream(f);
+						}
+
+						// Decode
 						FileInputStream inp = new FileInputStream(f);
 						Document doc = parseAXML(inp);
 						inp.close();
 
-						// Prepare
+						// Dump
 						DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
 						dbf.setNamespaceAware(false);
 						DocumentBuilder db = dbf.newDocumentBuilder();
 						Document newDoc = db.newDocument();
-
-						// Import original
 						NodeList lst = doc.getChildNodes();
 						for (int i = 0; i < lst.getLength(); i++) {
-							// Add node
 							Node node = lst.item(i);
 							newDoc.appendChild(newDoc.importNode(node, true));
 						}
-
-						// Read doc with data to merge
-						Document modDoc = db.parse(new File("lightray-work/mods/" + ent.getName()));
-						lst = modDoc.getChildNodes();
-						for (int i = 0; i < lst.getLength(); i++) {
-							Node node = lst.item(i);
-							if (node instanceof Element) {
-								Element ele = (Element) node;
-								if (ele.hasAttribute("lightray:fakerootelement")
-										&& ele.getAttribute("lightray:fakerootelement").equals("true")) {
-									// This was a fakeroot, means there are stack-loaded mods editing
-									// the same XML
-									lst = ele.getChildNodes();
-									for (int i2 = 0; i2 < lst.getLength(); i2++) {
-										node = lst.item(i2);
-
-										// Override attributes
-										if (node instanceof Element) {
-											Element nd = (Element) node;
-											NamedNodeMap attrs = ele.getAttributes();
-											for (int i3 = 0; i3 < attrs.getLength(); i3++) {
-												String attrName = attrs.item(i3).getNodeName();
-												if (!attrName.startsWith("lightray:"))
-													nd.setAttribute(attrName, ele.getAttribute(attrName));
-											}
-										}
-
-										applyXMLTransformer(node, newDoc, newDoc);
-									}
-									break;
-								}
-							}
-
-							// Override attributes
-							if (node instanceof Element) {
-								Element nd = (Element) node;
-								NamedNodeMap attrs = node.getAttributes();
-								for (int i3 = 0; i3 < attrs.getLength(); i3++) {
-									String attrName = attrs.item(i3).getNodeName();
-									if (!attrName.startsWith("lightray:"))
-										nd.setAttribute(attrName, nd.getAttribute(attrName));
-								}
-							}
-
-							applyXMLTransformer(node, newDoc, newDoc);
-						}
-
-						// Dump modified
-						new File("lightray-work/axml-mod/" + ent.getName()).getParentFile().mkdirs();
-
-						// Dump
 						FileOutputStream strm = new FileOutputStream(
-								new File("lightray-work/axml-mod/" + ent.getName()));
+								new File("lightray-work/axml-dump/" + ent.getName()));
 						TransformerFactory transformerFactory = TransformerFactory.newInstance();
 						Transformer transformer = transformerFactory.newTransformer();
 						transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
@@ -866,34 +808,80 @@ public class MainWindow {
 						StreamResult result = new StreamResult(strm);
 						transformer.transform(source, result);
 						strm.close();
-
-						// Recompile
-						new File("lightray-work/axml-mod-bin/" + ent.getName()).getParentFile().mkdirs();
-						compileBinaryXML(new File("lightray-work/axml-mod-bin/" + ent.getName()), newDoc);
-
-						// Swap streams
-						entStrm.close();
-						ZipEntry newEnt = new ZipEntry(ent.getName());
-						zipO.putNextEntry(newEnt);
-						entStrm = new FileInputStream("lightray-work/axml-mod-bin/" + ent.getName());
-						modFiles.remove(ent.getName());
-					} else {
-						// Swap streams
-						entStrm.close();
-						ZipEntry newEnt = new ZipEntry(ent.getName());
-						if (ent.getName().equals("resources.arsc") || ent.getName().equals("/resources.arsc")) {
-							File file = new File("lightray-work/mods/" + ent.getName());
-							newEnt.setMethod(ZipEntry.STORED);
-							newEnt.setCrc(computeCrc(file));
-							newEnt.setSize(file.length());
-							newEnt.setCompressedSize(file.length());
-						}
-						zipO.putNextEntry(newEnt);
-						entStrm = new FileInputStream("lightray-work/mods/" + ent.getName());
-						modFiles.remove(ent.getName());
+					} catch (Exception e) {
+						// NO
+						// Library is unstable lets not crash
 					}
-				} else if (ent.getName().endsWith(".dex")
-						&& (patches.stream().anyMatch(t -> t.type == PatchEntryType.TRANSFORMER))) {
+				}
+
+				// Handle mod
+				if (modFiles.contains(ent.getName())) {
+					ProgressWindow.WindowLogger.log("  Mod install " + ent.getName());
+
+					// Check if its a AXML resource
+					if ((ent.getName().endsWith(".xml") || ent.getName().endsWith(".axml"))
+							&& !ent.getName().startsWith("assets/") && !ent.getName().startsWith("/assets/")) {
+						// Load modded
+						File mod = new File("lightray-work/mods/" + ent.getName());
+						if (mod.exists()) {
+							// Dump importing axml
+							try {
+								// Decode original axml
+								new File("lightray-work/axml-mod-bin/" + ent.getName()).getParentFile().mkdirs();
+								new File("lightray-work/axml-mod-dump/" + ent.getName()).getParentFile().mkdirs();
+								File f = new File("lightray-work/axml-mod-bin/" + ent.getName());
+
+								// Save current
+								FileOutputStream strmO = new FileOutputStream(f);
+								entStrm.transferTo(strmO);
+								strmO.close();
+								entStrm = new FileInputStream(f);
+
+								// Decode
+								FileInputStream inp = new FileInputStream(f);
+								Document doc = parseAXML(inp);
+								inp.close();
+
+								// Dump
+								DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+								dbf.setNamespaceAware(false);
+								DocumentBuilder db = dbf.newDocumentBuilder();
+								Document newDoc = db.newDocument();
+								NodeList lst = doc.getChildNodes();
+								for (int i = 0; i < lst.getLength(); i++) {
+									Node node = lst.item(i);
+									newDoc.appendChild(newDoc.importNode(node, true));
+								}
+								FileOutputStream strm = new FileOutputStream(
+										new File("lightray-work/axml-mod-dump/" + ent.getName()));
+								TransformerFactory transformerFactory = TransformerFactory.newInstance();
+								Transformer transformer = transformerFactory.newTransformer();
+								transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
+								transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+								DOMSource source = new DOMSource(newDoc);
+								StreamResult result = new StreamResult(strm);
+								transformer.transform(source, result);
+								strm.close();
+							} catch (Exception e) {
+								// NO
+								// Library is unstable lets not crash
+							}
+						}
+					}
+
+					// Swap streams
+					entStrm.close();
+					ZipEntry newEnt = new ZipEntry(ent.getName());
+					if (ent.getName().equals("resources.arsc") || ent.getName().equals("/resources.arsc")) {
+						File file = new File("lightray-work/mods/" + ent.getName());
+						newEnt.setMethod(ZipEntry.STORED);
+						newEnt.setCrc(computeCrc(file));
+						newEnt.setSize(file.length());
+						newEnt.setCompressedSize(file.length());
+					}
+					zipO.putNextEntry(newEnt);
+					entStrm = new FileInputStream("lightray-work/mods/" + ent.getName());
+				} else if (ent.getName().endsWith(".dex")) {
 					// Edit classes
 					ProgressWindow.WindowLogger.log("  Processing classes...");
 					ProgressWindow.WindowLogger.setLabel("Processing classes...");
@@ -920,12 +908,8 @@ public class MainWindow {
 					builder.redirectOutput(Redirect.PIPE);
 					builder.redirectError(Redirect.PIPE);
 					Process proc = builder.start();
-					ProgressWindow.WindowLogger
-							.log("      [DEX2JAR] " + new String(proc.getInputStream().readAllBytes(), "UTF-8").trim()
-									.replace("\r", "").replace("\n", "\n      [DEX2JAR] "));
-					ProgressWindow.WindowLogger
-							.log("      [DEX2JAR] " + new String(proc.getErrorStream().readAllBytes(), "UTF-8").trim()
-									.replace("\r", "").replace("\n", "\n      [DEX2JAR] "));
+					logAsyncFromStream(proc.getInputStream(), "	  [DEX2JAR] ");
+					logAsyncFromStream(proc.getErrorStream(), "	  [DEX2JAR] ");
 					proc.waitFor();
 					if (proc.exitValue() != 0)
 						throw new Exception("Non-zero exit code for dex2jar!\n\n"
@@ -964,7 +948,7 @@ public class MainWindow {
 					File jar = new File("lightray-work/" + fName + "-dex2jar.jar");
 					pool.addSource(jar);
 					Transformers.addClassSource(jar);
-					patchClasses(new File("lightray-work/" + fName), "");
+					patchClasses(new File("lightray-work/" + fName), fName, "");
 
 					// Re-zip
 					ProgressWindow.WindowLogger.log("    Zipping classes...");
@@ -974,22 +958,55 @@ public class MainWindow {
 					clJar.close();
 					outF.close();
 
-					// Run dx
-					ProgressWindow.WindowLogger.log("    Running dx...");
-					builder = new ProcessBuilder(jvm, "-cp", libs, "com.android.dx.command.Main", "--dex",
-							"--no-strict", "--min-sdk-version", minSdk, "--output", fName + "-patched.dex",
-							fName + ".jar");
+					// Run d8
+					ProgressWindow.WindowLogger.log("    Running D8...");
+					ArrayList<String> cmd = new ArrayList<String>();
+					cmd.add(jvm);
+					cmd.add("-cp");
+					cmd.add(new File("buildtools/build-tools/lib/d8.jar").getCanonicalPath());
+					cmd.add("com.android.tools.r8.D8");
+					cmd.add("--classfile");
+					cmd.add(fName + ".jar");
+					cmd.add("--output");
+					cmd.add(fName + "-desugared.jar");
+					for (File lib : MainWindow.libs) {
+						cmd.add("--classpath");
+						cmd.add(lib.getCanonicalPath());
+					}
+					for (PatchEntry entry : MainWindow.patches.values()) {
+						if (entry.type == PatchEntryType.COLLECTION)
+							continue;
+						cmd.add("--classpath");
+						cmd.add(entry.file.getCanonicalPath());
+					}
+					builder = new ProcessBuilder(cmd.toArray(t -> new String[t]));
 					builder.directory(new File("lightray-work"));
 					builder.redirectInput(Redirect.PIPE);
 					builder.redirectOutput(Redirect.PIPE);
 					builder.redirectError(Redirect.PIPE);
 					proc = builder.start();
-					ProgressWindow.WindowLogger
-							.log("      [DX] " + new String(proc.getInputStream().readAllBytes(), "UTF-8").trim()
-									.replace("\r", "").replace("\n", "\n      [DX] "));
-					ProgressWindow.WindowLogger
-							.log("      [DX] " + new String(proc.getErrorStream().readAllBytes(), "UTF-8").trim()
-									.replace("\r", "").replace("\n", "\n      [DX] "));
+					logAsyncFromStream(proc.getInputStream(), "	  [D8] ");
+					logAsyncFromStream(proc.getErrorStream(), "	  [D8] ");
+					proc.waitFor();
+					if (proc.exitValue() != 0)
+						throw new Exception("Non-zero exit code for d8!\n\n"
+								+ "This is most commonly caused by a incompatible java environment.\n\n"
+								+ "Try updating your Java installation or try another version of it.\n\n"
+								+ "Exit code: " + proc.exitValue());
+
+					// Run dx
+					ProgressWindow.WindowLogger.log("    Running dx...");
+					builder = new ProcessBuilder(jvm, "-cp", libs, "com.android.dx.command.Main", "--dex",
+							"--no-strict", "--core-library", "--min-sdk-version", minSdk, "--output",
+							fName + "-patched.dex",
+							fName + "-desugared.jar");
+					builder.directory(new File("lightray-work"));
+					builder.redirectInput(Redirect.PIPE);
+					builder.redirectOutput(Redirect.PIPE);
+					builder.redirectError(Redirect.PIPE);
+					proc = builder.start();
+					logAsyncFromStream(proc.getInputStream(), "	  [DX] ");
+					logAsyncFromStream(proc.getErrorStream(), "	  [DX] ");
 					proc.waitFor();
 					if (proc.exitValue() != 0)
 						throw new Exception("Non-zero exit code for dx!\n\n"
@@ -1034,29 +1051,52 @@ public class MainWindow {
 				boolean compSuccess = false;
 				if (!file.startsWith("/assets/") && !file.startsWith("assets/")
 						&& (file.endsWith(".axml") || file.endsWith(".xml"))) {
-					try {
-						// Prepare to read
-						DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-						dbf.setNamespaceAware(false);
-						DocumentBuilder db = dbf.newDocumentBuilder();
-						Document original = null;
+					// Load modded
+					File mod = new File("lightray-work/mods/" + ent.getName());
+					if (mod.exists()) {
+						// Dump importing axml
+						try {
+							// Decode original axml
+							new File("lightray-work/axml-mod-bin/" + ent.getName()).getParentFile().mkdirs();
+							new File("lightray-work/axml-mod-dump/" + ent.getName()).getParentFile().mkdirs();
+							File f = new File("lightray-work/axml-mod-bin/" + ent.getName());
 
-						// Read
-						InputStream entStrm = new FileInputStream("lightray-work/mods/" + ent.getName());
-						original = db.parse(entStrm);
-						entStrm.close();
+							// Save current
+							FileOutputStream strmO = new FileOutputStream(f);
+							InputStream entStrm = new FileInputStream("lightray-work/mods/" + ent.getName());
+							entStrm.transferTo(strmO);
+							entStrm.close();
+							strmO.close();
 
-						// Recompile
-						new File("lightray-work/axml-mod-bin/" + ent.getName()).getParentFile().mkdirs();
-						compileBinaryXML(new File("lightray-work/axml-mod-bin/" + ent.getName()), original);
+							// Decode
+							FileInputStream inp = new FileInputStream(f);
+							Document doc = parseAXML(inp);
+							inp.close();
 
-						// Write
-						entStrm = new FileInputStream("lightray-work/axml-mod-bin/" + ent.getName());
-						modFiles.remove(ent.getName());
-						entStrm.transferTo(zipO);
-						entStrm.close();
-					} catch (Exception e) {
-
+							// Dump
+							DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+							dbf.setNamespaceAware(false);
+							DocumentBuilder db = dbf.newDocumentBuilder();
+							Document newDoc = db.newDocument();
+							NodeList lst = doc.getChildNodes();
+							for (int i = 0; i < lst.getLength(); i++) {
+								Node node = lst.item(i);
+								newDoc.appendChild(newDoc.importNode(node, true));
+							}
+							FileOutputStream strm = new FileOutputStream(
+									new File("lightray-work/axml-mod-dump/" + ent.getName()));
+							TransformerFactory transformerFactory = TransformerFactory.newInstance();
+							Transformer transformer = transformerFactory.newTransformer();
+							transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
+							transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+							DOMSource source = new DOMSource(newDoc);
+							StreamResult result = new StreamResult(strm);
+							transformer.transform(source, result);
+							strm.close();
+						} catch (Exception e) {
+							// NO
+							// Library is unstable lets not crash
+						}
 					}
 				}
 
@@ -1096,10 +1136,8 @@ public class MainWindow {
 		builder.redirectOutput(Redirect.PIPE);
 		builder.redirectError(Redirect.PIPE);
 		Process proc = builder.start();
-		ProgressWindow.WindowLogger.log(new String(proc.getInputStream().readAllBytes(), "UTF-8").trim()
-				.replace("\r", "").replace("\n", "\n    [ZIPALIGN] "));
-		ProgressWindow.WindowLogger.log(new String(proc.getErrorStream().readAllBytes(), "UTF-8").trim()
-				.replace("\r", "").replace("\n", "\n    [ZIPALIGN] "));
+		logAsyncFromStream(proc.getInputStream(), "	  [ZIPALIGN] ");
+		logAsyncFromStream(proc.getErrorStream(), "	  [ZIPALIGN] ");
 		proc.waitFor();
 		if (proc.exitValue() != 0)
 			throw new Exception("Non-zero exit code for ZIPALIGN!\n\n"
@@ -1129,10 +1167,8 @@ public class MainWindow {
 		proc = builder.start();
 		proc.getOutputStream().write("appmod\n".getBytes());
 		proc.getOutputStream().close();
-		ProgressWindow.WindowLogger.log(new String(proc.getInputStream().readAllBytes(), "UTF-8").trim()
-				.replace("\r", "").replace("\n", "\n    [APKSIGNER] "));
-		ProgressWindow.WindowLogger.log(new String(proc.getErrorStream().readAllBytes(), "UTF-8").trim()
-				.replace("\r", "").replace("\n", "\n    [APKSIGNER] "));
+		logAsyncFromStream(proc.getInputStream(), "	  [APKSIGNER] ");
+		logAsyncFromStream(proc.getErrorStream(), "	  [APKSIGNER] ");
 		proc.waitFor();
 		if (proc.exitValue() != 0)
 			throw new Exception("Non-zero exit code for APKSIGNER!\n\n"
@@ -1154,6 +1190,88 @@ public class MainWindow {
 		ProgressWindow.WindowLogger.setLabel("Modifications applied successfully!");
 	}
 
+	private static void logAsyncFromStream(InputStream strm, String prefix) {
+		Thread th = new Thread(() -> {
+			PrependedBufferStream st = new PrependedBufferStream(strm);
+			while (true) {
+				try {
+					String line = readStreamLine(st);
+					if (line == null)
+						break;
+					ProgressWindow.WindowLogger.log(prefix + line.replace("\r", "").replace("\n", "\n" + prefix));
+				} catch (IOException e) {
+					break;
+				}
+			}
+		});
+		th.setDaemon(true);
+		th.setName("Logger");
+		th.start();
+	}
+
+	private static String readStreamLine(PrependedBufferStream strm) throws IOException {
+		// Read a number of bytes
+		byte[] content = new byte[20480];
+		int read = strm.read(content, 0, content.length);
+		if (read <= -1) {
+			// Failed
+			return null;
+		} else {
+			// Trim array
+			content = Arrays.copyOfRange(content, 0, read);
+
+			// Find newline
+			String newData = new String(content, "UTF-8");
+			if (newData.contains("\n")) {
+				// Found newline
+				String line = newData.substring(0, newData.indexOf("\n"));
+				int offset = line.length() + 1;
+				int returnLength = content.length - offset;
+				if (returnLength > 0) {
+					// Return
+					strm.returnToBuffer(Arrays.copyOfRange(content, offset, content.length));
+				}
+				return line.replace("\r", "");
+			} else {
+				// Read more
+				while (true) {
+					byte[] addition = new byte[20480];
+					read = strm.read(addition, 0, addition.length);
+					if (read <= -1) {
+						// Failed
+						strm.returnToBuffer(content);
+						return null;
+					}
+
+					// Trim
+					addition = Arrays.copyOfRange(addition, 0, read);
+
+					// Append
+					byte[] newContent = new byte[content.length + addition.length];
+					for (int i = 0; i < content.length; i++)
+						newContent[i] = content[i];
+					for (int i = content.length; i < newContent.length; i++)
+						newContent[i] = addition[i - content.length];
+					content = newContent;
+
+					// Find newline
+					newData = new String(content, "UTF-8");
+					if (newData.contains("\n")) {
+						// Found newline
+						String line = newData.substring(0, newData.indexOf("\n"));
+						int offset = line.length() + 1;
+						int returnLength = content.length - offset;
+						if (returnLength > 0) {
+							// Return
+							strm.returnToBuffer(Arrays.copyOfRange(content, offset, content.length));
+						}
+						return line.replace("\r", "");
+					}
+				}
+			}
+		}
+	}
+
 	private static int copyPatchResources(File source, File outputRoot, int current, float step,
 			ArrayList<String> modFiles, String pref, int i)
 			throws IOException, TransformerException, ParserConfigurationException {
@@ -1168,8 +1286,17 @@ public class MainWindow {
 				i = copyPatchResources(f, outputRoot, current, step, modFiles, pref + f.getName() + "/", i);
 			} else {
 				if (name.endsWith(".class")) {
+					// Check if entry specifies a specific class target
+					String nm = name;
+					while (nm.startsWith("/"))
+						nm = nm.substring(1);
+					String output = "classes/" + nm;
+					if (nm.startsWith("dex/classes")) {
+						output = nm.substring(4);
+					}
+
 					// Copy file
-					File outp = new File("lightray-work/classes/" + name);
+					File outp = new File("lightray-work/" + output);
 					outp.getParentFile().mkdirs();
 					FileOutputStream strm = new FileOutputStream(outp);
 					InputStream inp = new FileInputStream(f);
@@ -1191,133 +1318,9 @@ public class MainWindow {
 	private static void handlePatchResourceFile(File out, String pth, InputStream inp)
 			throws IOException, TransformerException, ParserConfigurationException {
 		out.getParentFile().mkdirs();
-		if ((out.getName().endsWith(".xml") || out.getName().endsWith(".axml")) && !pth.startsWith("assets/")
-				&& !pth.startsWith("/assets/")) {
-			if (!out.exists()) {
-				// If needed, decompile the AXML
-				try {
-					Document original = parseAXML(inp);
-
-					// Write
-					DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-					dbf.setNamespaceAware(false);
-					DocumentBuilder db = dbf.newDocumentBuilder();
-					Document newDoc = db.newDocument();
-					NodeList lst = original.getChildNodes();
-					for (int i = 0; i < lst.getLength(); i++) {
-						Node node = lst.item(i);
-						newDoc.appendChild(newDoc.importNode(node, true));
-					}
-					FileOutputStream strm = new FileOutputStream(out);
-					TransformerFactory transformerFactory = TransformerFactory.newInstance();
-					Transformer transformer = transformerFactory.newTransformer();
-					transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
-					transformer.setOutputProperty(OutputKeys.INDENT, "yes");
-					DOMSource source = new DOMSource(newDoc);
-					StreamResult result = new StreamResult(strm);
-					transformer.transform(source, result);
-					strm.close();
-				} catch (Exception e) {
-					// Not AXML
-					FileOutputStream strm = new FileOutputStream(out);
-					inp.transferTo(strm);
-					strm.close();
-				}
-			} else {
-				// Merge documents
-				DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-				dbf.setNamespaceAware(false);
-				DocumentBuilder db = dbf.newDocumentBuilder();
-				Document original = null;
-				try {
-					original = db.parse(inp);
-				} catch (Exception e) {
-					// Probably compiled XML, decompile it
-					try {
-						original = parseAXML(inp);
-					} catch (Exception e2) {
-						// Lets bail out-
-						FileOutputStream strm = new FileOutputStream(out);
-						inp.transferTo(strm);
-						strm.close();
-					}
-				}
-				if (original != null) {
-					Document merge = null;
-					try {
-						merge = db.parse(inp);
-					} catch (Exception e) {
-						// Probably compiled XML, decompile it
-						merge = parseAXML(inp);
-					}
-					if (merge != null) {
-						Document newDoc = db.newDocument();
-						Element fakeRoot = newDoc.createElement("lightrayxmlinjectroot");
-						// Collect namespaces
-						ArrayList<String> namespaces = new ArrayList<String>();
-						namespaces.add("xmlns:lightray");
-						NodeList lst = original.getChildNodes();
-						for (int i = 0; i < lst.getLength(); i++) {
-							Node node = lst.item(i);
-							if (node instanceof Element) {
-								Element ele = (Element) node;
-								NamedNodeMap attrs = ele.getAttributes();
-								for (int i2 = 0; i2 < attrs.getLength(); i2++) {
-									String attrName = attrs.item(i2).getNodeName();
-									if (attrName.startsWith("xmlns:")) {
-										if (!namespaces.contains(attrName)) {
-											namespaces.add(attrName);
-											fakeRoot.setAttribute(attrName, ele.getAttribute(attrName));
-										}
-									}
-								}
-							}
-						}
-						fakeRoot.setAttribute("xmlns:lightray", "http://schemas.aerialworks.ddns.net/lightray");
-						fakeRoot.setAttribute("lightray:fakerootelement", "true");
-						newDoc.appendChild(fakeRoot);
-						lst = original.getChildNodes();
-						for (int i = 0; i < lst.getLength(); i++) {
-							Node node = lst.item(i);
-							if (node instanceof Element && ((Element) node).hasAttribute("lightray:fakerootelement")
-									&& ((Element) node).getAttribute("lightray:fakerootelement").equals("true")) {
-
-								// Get from old fake root
-								Element oldRoot = (Element) node;
-								lst = oldRoot.getChildNodes();
-								for (int i2 = 0; i2 < lst.getLength(); i2++) {
-									node = lst.item(i2);
-									fakeRoot.appendChild(newDoc.importNode(node, true));
-								}
-
-								break;
-							}
-							fakeRoot.appendChild(newDoc.importNode(node, true));
-						}
-						lst = merge.getChildNodes();
-						for (int i = 0; i < lst.getLength(); i++) {
-							Node node = lst.item(i);
-							fakeRoot.appendChild(newDoc.importNode(node, true));
-						}
-
-						// Write
-						FileOutputStream strm = new FileOutputStream(out);
-						TransformerFactory transformerFactory = TransformerFactory.newInstance();
-						Transformer transformer = transformerFactory.newTransformer();
-						transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
-						transformer.setOutputProperty(OutputKeys.INDENT, "yes");
-						DOMSource source = new DOMSource(newDoc);
-						StreamResult result = new StreamResult(strm);
-						transformer.transform(source, result);
-						strm.close();
-					}
-				}
-			}
-		} else {
-			FileOutputStream strm = new FileOutputStream(out);
-			inp.transferTo(strm);
-			strm.close();
-		}
+		FileOutputStream strm = new FileOutputStream(out);
+		inp.transferTo(strm);
+		strm.close();
 	}
 
 	private static void buildFromCli(String[] args) {
@@ -1456,8 +1459,8 @@ public class MainWindow {
 		for (File patch : patches) {
 			System.out.println("  Loading patch: " + patch);
 			PatchEntry e = loadMod(patch, patch.getParentFile() == null ? "" : patch.getParentFile().getPath() + "/",
-					false);
-			e.enabled = true;
+					false, null);
+			setEnabledRecursive(e, true);
 		}
 		for (File patch : plainPatches) {
 			System.out.println("  Loading plain folder patch: " + patch);
@@ -1520,19 +1523,37 @@ public class MainWindow {
 				loadLibs(m, pool);
 			else if (m.getName().endsWith(".jar") || m.getName().endsWith(".zip")) {
 				pool.addSource(m);
+				MainWindow.libs.add(m);
 				ProgressWindow.WindowLogger.log("  Added: " + m.getName());
 			}
 		}
 	}
 
-	private void scan(File mods, String pref) {
+	private static void scan(File mods, String pref, PatchEntry parent) {
 		// Scan folder
 		for (File m : mods.listFiles()) {
-			if (m.isDirectory())
-				scan(m, pref + m.getName() + "/");
-			else if (m.getName().endsWith(".jar") || m.getName().endsWith(".zip"))
-				loadMod(m, pref, true);
+			if (m.isDirectory()) {
+				// Load collection
+				PatchEntry col = new PatchEntry();
+				if (parent != null)
+					parent.childEntries.add(col);
+				col.file = m;
+				col.name = pref + m.getName();
+				col.type = PatchEntryType.COLLECTION;
+				col.parent = parent;
+				col.box = new JCheckBox(
+						parentName(parent) + m.getName() + " (" + col.type.toString().toLowerCase() + ")");
+				patches.put(col.name, col);
+				scan(m, pref + m.getName() + "/", col);
+			} else if (m.getName().endsWith(".jar") || m.getName().endsWith(".zip"))
+				loadMod(m, pref, true, parent);
 		}
+	}
+
+	private static String parentName(PatchEntry entry) {
+		if (entry != null)
+			return parentName(entry.parent) + entry.file.getName() + "/";
+		return "";
 	}
 
 	private void scanPlain(File mods) {
@@ -1542,18 +1563,22 @@ public class MainWindow {
 		}
 	}
 
-	private static void patchClasses(File dir, String pref) throws IOException {
+	private static void patchClasses(File dir, String fName, String pref) throws IOException {
 		// Scan folder
 		for (File m : dir.listFiles()) {
 			if (m.isDirectory())
-				patchClasses(m, pref + m.getName() + "/");
+				patchClasses(m, fName, pref + m.getName() + "/");
 			else if (m.getName().endsWith(".class"))
-				patchClass(m, pref);
+				patchClass(m, fName, pref);
 		}
 	}
 
-	private static void patchClass(File classFile, String pref) throws IOException {
+	private static void patchClass(File classFile, String fName, String pref) throws IOException {
 		String className = pref + classFile.getName().substring(0, classFile.getName().lastIndexOf(".class"));
+
+		// Check transformer
+		if (!Transformers.hasTransformers(className))
+			return;
 
 		// Apply patch
 		ProgressWindow.WindowLogger.log("      Patching: " + className);
@@ -1587,12 +1612,34 @@ public class MainWindow {
 		}
 	}
 
-	private static PatchEntry loadMod(File mod, String pref, boolean windowed) {
+	private static PatchEntry loadMod(File mod, String pref, boolean windowed, PatchEntry parent) {
+		// Check type
+		if (mod.isDirectory()) {
+			// Load collection
+			PatchEntry col = new PatchEntry();
+			if (parent != null)
+				parent.childEntries.add(col);
+			col.file = mod;
+			col.name = pref + mod.getName();
+			col.type = PatchEntryType.COLLECTION;
+			col.parent = parent;
+			col.box = new JCheckBox(
+					parentName(parent) + mod.getName() + " (" + col.type.toString().toLowerCase() + ")");
+			patches.put(col.name, col);
+			scan(mod, pref + mod.getName() + "/", col);
+			return col;
+		}
+
 		// Load mod
 		PatchEntry patch = new PatchEntry();
 		patch.file = mod;
 		patch.name = pref + mod.getName();
 		patch.type = PatchEntryType.RESOURCE;
+		patch.parent = parent;
+
+		// Check parent
+		if (parent != null)
+			parent.childEntries.add(patch);
 
 		// Load into memory
 		try {
@@ -1662,7 +1709,8 @@ public class MainWindow {
 			}
 			return null;
 		}
-		patch.box = new JCheckBox(mod.getName() + " (" + patch.type.toString().toLowerCase() + ")");
+		patch.box = new JCheckBox(
+				parentName(parent) + mod.getName() + " (" + patch.type.toString().toLowerCase() + ")");
 
 		// Add
 		patches.put(patch.name, patch);
@@ -1856,273 +1904,6 @@ public class MainWindow {
 		ProgressWindow.WindowLogger.setMax(100);
 		ProgressWindow.WindowLogger.setValue(100);
 		data.close();
-	}
-
-	private static void applyXMLTransformer(Node node, Node parent, Document doc) {
-		if (node instanceof Element) {
-			Element ele = (Element) node;
-
-			// Check mode
-			Node outp = null;
-			if (ele.getAttribute("lightray:merge").equals("true")) {
-				// Merge
-
-				// Load clear attribute
-				boolean clear = false;
-				if (ele.hasAttribute("lightray:clear")) {
-					clear = ele.getAttribute("lightray:clear").equals("true");
-					ele.removeAttribute("lightray:clear");
-				}
-
-				// Load offset
-				int offset = 0;
-				if (ele.hasAttribute("lightray:offset")) {
-					offset = Integer.parseInt(ele.getAttribute("lightray:offset"));
-					ele.removeAttribute("lightray:offset");
-				}
-
-				// Load target filter
-				JsonObject targetFilter = new JsonObject();
-				if (ele.hasAttribute("lightray:filterattributes")) {
-					targetFilter = JsonParser.parseString(ele.getAttribute("lightray:filterattributes"))
-							.getAsJsonObject();
-					ele.removeAttribute("lightray:filterattributes");
-				}
-
-				// Find target
-				int current = 0;
-				NodeList lst = parent.getChildNodes();
-				for (int i = 0; i < lst.getLength(); i++) {
-					Node itm = lst.item(i);
-					String name = itm.getNodeName();
-					if (name.equals(node.getNodeName())) {
-						if (itm instanceof Element) {
-							Element element = (Element) itm;
-
-							// Check attribute filters
-							for (String key : targetFilter.keySet()) {
-								String value = targetFilter.get(key).getAsString();
-								if (!element.getAttribute(key).equals(value)) {
-									continue;
-								}
-							}
-						} else if (targetFilter.size() != 0)
-							continue; // NO
-
-						// Merge into it
-						if (current >= offset) {
-							outp = itm;
-							break;
-						}
-						offset++;
-					}
-				}
-
-				// Check result
-				if (outp == null)
-					return; // Invalid
-
-				// Clear if needed
-				if (clear) {
-					while (outp.hasChildNodes()) {
-						outp.removeChild(outp.getFirstChild());
-					}
-				}
-
-				// Insert other attributes
-				if (outp instanceof Element) {
-					NamedNodeMap attrs = ele.getAttributes();
-					for (int i = 0; i < attrs.getLength(); i++) {
-						Node attr = attrs.item(i);
-						if (!attr.getNodeName().startsWith("lightray:")) {
-							((Element) outp).setAttribute(attr.getNodeName(), ele.getAttribute(attr.getNodeName()));
-						}
-					}
-				}
-
-				// Remove attribute
-				ele.removeAttribute("lightray:merge");
-			} else {
-				// Insert
-				outp = (Element) doc.importNode(ele, true);
-				parent.appendChild(outp);
-			}
-
-			// Handle child nodes
-			NodeList lst = ele.getChildNodes();
-			for (int i = 0; i < lst.getLength(); i++) {
-				Node itm = lst.item(i);
-				applyXMLTransformer(itm, outp, doc);
-			}
-		} else {
-			// Append
-			if (node instanceof Text) {
-				Text t = (Text) node;
-				if (t.getTextContent() == null || t.getTextContent().isBlank())
-					return;
-				else {
-					// Delete old text
-					NodeList lst = parent.getChildNodes();
-					for (int i = 0; i < lst.getLength(); i++) {
-						Node itm = lst.item(i);
-						if (itm instanceof Text) {
-							parent.removeChild(itm);
-							break;
-						}
-					}
-				}
-			}
-			parent.appendChild(doc.importNode(node, true));
-		}
-	}
-
-	private static void compileBinaryXML(File output, Document doc) throws IOException {
-		FileOutputStream outputS = new FileOutputStream(output);
-		compileBinaryXML(outputS, doc);
-		outputS.close();
-	}
-
-	private static void compileBinaryXML(FileOutputStream output, Document doc) throws IOException {
-		// Create writer
-		AxmlWriter writer = new AxmlWriter();
-
-		// Write elements
-		HashMap<String, String> namespaces = new HashMap<String, String>();
-		NodeList lst = doc.getChildNodes();
-		for (int i = 0; i < lst.getLength(); i++) {
-			Node node = lst.item(i);
-			if (node instanceof Comment)
-				continue;
-			writeNode(node, writer, namespaces);
-		}
-
-		// Write
-		output.write(writer.toByteArray());
-	}
-
-	private static void writeNode(Node node, AxmlVisitor parentRoot, HashMap<String, String> namespaces) {
-		// Add namespaces
-		if (node instanceof Element) {
-			Element ele = (Element) node;
-			NamedNodeMap attrs = ele.getAttributes();
-			for (int i = 0; i < attrs.getLength(); i++) {
-				Node attr = attrs.item(i);
-				if (attr.getNodeName().startsWith("xmlns:")) {
-					String prefix = attr.getNodeName().substring("xmlns:".length());
-					parentRoot.ns(prefix, ele.getAttribute(attr.getNodeName()), -1);
-					namespaces.put(prefix, ele.getAttribute(attr.getNodeName()));
-				}
-			}
-		}
-
-		writeNode(node, (NodeVisitor) parentRoot, namespaces);
-	}
-
-	private static void writeNode(Node node, NodeVisitor parent, HashMap<String, String> namespaces) {
-		// Create child
-		String name = node.getNodeName();
-		String ns = null;
-
-		// Find namespace
-		for (String namespace : namespaces.keySet()) {
-			if (name.startsWith(namespace + ":")) {
-				ns = namespaces.get(namespace);
-				name = name.substring(name.indexOf(":") + 1);
-				break;
-			}
-		}
-
-		NodeVisitor ch = parent.child(ns, name);
-		writeNodeContent(node, ch, namespaces);
-	}
-
-	private static void writeNodeContent(Node node, NodeVisitor ch, HashMap<String, String> namespaces) {
-		// Write element fields
-		if (node instanceof Element) {
-			Element ele = (Element) node;
-
-			// Write text if present
-			String txt = ele.getTextContent();
-			if (txt != null && !txt.isBlank())
-				ch.text(-1, txt);
-
-			// Write attributes
-			NamedNodeMap attrs = ele.getAttributes();
-			for (int i = 0; i < attrs.getLength(); i++) {
-				Node attr = attrs.item(i);
-				if (!attr.getNodeName().startsWith("xmlns:")) {
-					String name = attr.getNodeName();
-					String value = ele.getAttribute(name);
-					String ns = null;
-
-					// Find namespace
-					for (String namespace : namespaces.keySet()) {
-						if (name.startsWith(namespace + ":")) {
-							ns = namespaces.get(namespace);
-							name = name.substring(name.indexOf(":") + 1);
-							break;
-						}
-					}
-
-					// Find type
-					Object val = null;
-					int type = -1;
-
-					// Find type
-					if (value.startsWith("@id/0x") && value.substring("@id/0x".length()).matches("^[0-9A-Fa-f]+$")) {
-						try {
-							val = Integer.parseInt(value.substring("@id/0x".length()), 16);
-							type = NodeVisitor.TYPE_REFERENCE;
-						} catch (NumberFormatException e) {
-						}
-					}
-					if (type == -1) {
-						if (value.startsWith("0x") && value.substring(2).matches("^[0-9A-Fa-f]+$")) {
-							try {
-								val = Integer.parseInt(value.substring(2), 16);
-								type = NodeVisitor.TYPE_INT_HEX;
-							} catch (NumberFormatException e) {
-							}
-						}
-					}
-					if (type == -1) {
-						if (value.equalsIgnoreCase("true") || value.equalsIgnoreCase("false")) {
-							try {
-								val = value.equalsIgnoreCase("true");
-								type = NodeVisitor.TYPE_INT_BOOLEAN;
-							} catch (NumberFormatException e) {
-							}
-						}
-					}
-					if (type == -1) {
-						if (value.matches("^[0-9]+$")) {
-							try {
-								val = Integer.parseInt(value);
-								type = NodeVisitor.TYPE_FIRST_INT;
-							} catch (NumberFormatException e) {
-							}
-						}
-					}
-					if (type == -1) {
-						val = value;
-						type = NodeVisitor.TYPE_STRING;
-					}
-
-					// Write
-					if (type != -1)
-						ch.attr(ns, name, -1, type, val);
-				}
-			}
-
-			// Write child nodes
-			NodeList lst = node.getChildNodes();
-			for (int i = 0; i < lst.getLength(); i++) {
-				Node child = lst.item(i);
-				if (child instanceof Comment || child instanceof Text)
-					continue;
-				writeNode(child, ch, namespaces);
-			}
-		}
 	}
 
 	private static Document parseAXML(InputStream inp) throws IOException, ParserConfigurationException {

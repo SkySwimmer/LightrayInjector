@@ -126,6 +126,35 @@ public class Transformers {
 	}
 
 	/**
+	 * Checks if transformers are defined for the given class
+	 * 
+	 * @param className Class name
+	 * @return True if transformers are defined, false otherwise
+	 */
+	public static boolean hasTransformers(String className) {
+		String classNameF = className.replaceAll("\\.", "/");
+		boolean match = false;
+		boolean transformerMatch = false;
+		if (hooks.stream().anyMatch(t -> {
+			String target = t.getTarget();
+			if (target.equals("@ANY"))
+				return true;
+
+			return target.equals(classNameF);
+		})) {
+			match = true;
+		}
+		if (transformers.keySet().stream().anyMatch(t -> t.equals(classNameF))) {
+			transformerMatch = true;
+		}
+
+		if (!match && !transformerMatch) {
+			return false;
+		}
+		return true;
+	}
+
+	/**
 	 * Applies transformers
 	 * 
 	 * @param className       Class name

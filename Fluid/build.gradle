@@ -8,7 +8,7 @@ apply plugin: 'eclipse'
 group="org.asf.cyan"
 def authorname="AerialWorks Software Foundation"
 
-version="1.0.0.A33"
+version="1.0.0.A34"
 jar.dependsOn('processResources')
 
 processResources {

@@ -1,0 +1,77 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "java",
+            "name": "Launch Lightray",
+            "request": "launch",
+            "mainClass": "org.asf.lightray.MainWindow",
+            "projectName": "lightray-injector-LightrayInjector",
+            "cwd": "${workspaceFolder}/run",
+            "console": "internalConsole",
+            "env": {
+                "GTK_THEME": "Adwaita"
+            }
+        },
+        {
+            "type": "java",
+            "name": "Launch Lightray patcher (Feral)",
+            "request": "launch",
+            "mainClass": "org.asf.lightray.MainWindow",
+            "projectName": "lightray-injector-LightrayInjector",
+            "cwd": "${workspaceFolder}/run",
+            "console": "internalConsole",
+            "args": [
+                "--build-now",
+                "--apk-source",
+                "fer.al.apk",
+                "--add-patch",
+                "patches/feral",
+                "--add-folder-patch",
+                "plainpatches/emuferal-online"
+            ],
+            "env": {
+                "GTK_THEME": "Adwaita"
+            }
+        },
+        {
+            "type": "java",
+            "name": "Launch Lightray patcher (SoD)",
+            "request": "launch",
+            "mainClass": "org.asf.lightray.MainWindow",
+            "projectName": "lightray-injector-LightrayInjector",
+            "cwd": "${workspaceFolder}/run",
+            "console": "internalConsole",
+            "args": [
+                "--build-now",
+                "--apk-source",
+                "sod.apk",
+                "--add-patch",
+                "patches/sod"
+            ],
+            "env": {
+                "GTK_THEME": "Adwaita"
+            }
+        },
+        {
+            "type": "java",
+            "name": "Launch Lightray patcher (Signal as test)",
+            "request": "launch",
+            "mainClass": "org.asf.lightray.MainWindow",
+            "projectName": "lightray-injector-LightrayInjector",
+            "cwd": "${workspaceFolder}/run",
+            "console": "internalConsole",
+            "args": [
+                "--build-now",
+                "--apk-source",
+                "/home/stefane/Downloads/Signal-Android-website-prod-universal-release-8.0.4.apk"
+            ],
+            "env": {
+                "GTK_THEME": "Adwaita"
+            }
+        }
+    ]
+}
