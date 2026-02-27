@@ -1059,7 +1059,7 @@ public class MainWindow {
 			ProgressWindow.WindowLogger.log("  Updating " + ent.getName());
 			zipO.putNextEntry(ent);
 			if (!file.endsWith("/")) {
-				// Compile XAML
+				// XML
 				boolean compSuccess = false;
 				if (!file.startsWith("/assets/") && !file.startsWith("assets/")
 						&& (file.endsWith(".axml") || file.endsWith(".xml"))) {
