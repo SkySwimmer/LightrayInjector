@@ -847,6 +847,31 @@ public class MainWindow {
 								Document doc = parseAXML(inp);
 								inp.close();
 
+								// Check if AndroidManifest.xml
+								String man = ent.getName().replace("\\", "/");
+								while (man.startsWith("/"))
+									man = man.substring(1);
+								if (man.equals("AndroidManifest.xml")) {
+									// Android manifest
+
+									// Pull API version
+									manifestRoot = androidManifestDom.getDocumentElement();
+									sdkVersion = (Element) manifestRoot.getElementsByTagName("uses-sdk")
+											.item(0);
+									minSdk = sdkVersion.getAttribute("android:minSdkVersion");
+									targetSdk = sdkVersion.getAttribute("android:targetSdkVersion");
+
+									// Pull app info
+									pkg = manifestRoot.getAttribute("package");
+									appVerCode = manifestRoot.getAttribute("android:versionCode");
+									appVerName = manifestRoot.getAttribute("android:versionName");
+									ProgressWindow.WindowLogger.log("    Manifest overridden!");
+									ProgressWindow.WindowLogger.log(
+											"    Application: " + pkg + " " + appVerName + " (build " + appVerCode + ")");
+									ProgressWindow.WindowLogger
+											.log("    Target SDK: " + targetSdk + ", minimal SDK: " + minSdk);
+								}
+
 								// Dump
 								DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
 								dbf.setNamespaceAware(false);
