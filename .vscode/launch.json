@@ -55,23 +55,6 @@
             "env": {
                 "GTK_THEME": "Adwaita"
             }
-        },
-        {
-            "type": "java",
-            "name": "Launch Lightray patcher (Signal as test)",
-            "request": "launch",
-            "mainClass": "org.asf.lightray.MainWindow",
-            "projectName": "lightray-injector-LightrayInjector",
-            "cwd": "${workspaceFolder}/run",
-            "console": "internalConsole",
-            "args": [
-                "--build-now",
-                "--apk-source",
-                "/home/stefane/Downloads/Signal-Android-website-prod-universal-release-8.0.4.apk"
-            ],
-            "env": {
-                "GTK_THEME": "Adwaita"
-            }
         }
     ]
 }
