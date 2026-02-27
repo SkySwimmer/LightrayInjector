@@ -591,6 +591,7 @@ public class MainWindow {
 		ProgressWindow.WindowLogger.log("Loading modifications...");
 		ProgressWindow.WindowLogger.setLabel("Loading modifications...");
 		ProgressWindow.WindowLogger.log("Extracting mod resources...");
+		ArrayList<String> dexesInjected = new ArrayList<String>();
 		for (PatchEntry entry : patches) {
 			// Skip collections
 			if (entry.type == PatchEntryType.COLLECTION)
@@ -624,6 +625,8 @@ public class MainWindow {
 							if (nm.startsWith("dex/classes")) {
 								output = nm.substring(4);
 							}
+							if (!dexesInjected.contains(output.substring(0, output.indexOf("/"))))
+								dexesInjected.add(output.substring(0, output.indexOf("/")));
 
 							// Copy file
 							File outp = new File("lightray-work/" + output);
@@ -673,7 +676,7 @@ public class MainWindow {
 
 				// Copy
 				File out = new File("lightray-work/mods");
-				copyPatchResources(entry.file, out, current, step, modFiles, "", 0);
+				copyPatchResources(entry.file, out, current, step, modFiles, "", 0, dexesInjected);
 				ProgressWindow.WindowLogger.setValue(current + 100);
 
 				// Determine type
@@ -948,7 +951,8 @@ public class MainWindow {
 					File jar = new File("lightray-work/" + fName + "-dex2jar.jar");
 					pool.addSource(jar);
 					Transformers.addClassSource(jar);
-					patchClasses(new File("lightray-work/" + fName), fName, "");
+					boolean hasPatchedClasses = patchClasses(new File("lightray-work/" + fName), fName, "");
+					boolean hasNewClasses = dexesInjected.contains(fName);
 
 					// Re-zip
 					ProgressWindow.WindowLogger.log("    Zipping classes...");
@@ -958,48 +962,56 @@ public class MainWindow {
 					clJar.close();
 					outF.close();
 
-					// Run d8
-					ProgressWindow.WindowLogger.log("    Running D8...");
-					ArrayList<String> cmd = new ArrayList<String>();
-					cmd.add(jvm);
-					cmd.add("-cp");
-					cmd.add(new File("buildtools/build-tools/lib/d8.jar").getCanonicalPath());
-					cmd.add("com.android.tools.r8.D8");
-					cmd.add("--classfile");
-					cmd.add(fName + ".jar");
-					cmd.add("--output");
-					cmd.add(fName + "-desugared.jar");
-					for (File lib : MainWindow.libs) {
-						cmd.add("--classpath");
-						cmd.add(lib.getCanonicalPath());
+					// Source jar
+					String src = fName + ".jar";
+
+					// Check if any user patches were present
+					if (hasNewClasses || hasPatchedClasses) {
+						// Run d8
+						ProgressWindow.WindowLogger.log("    Running D8...");
+						ArrayList<String> cmd = new ArrayList<String>();
+						cmd.add(jvm);
+						cmd.add("-cp");
+						cmd.add(new File("buildtools/build-tools/lib/d8.jar").getCanonicalPath());
+						cmd.add("com.android.tools.r8.D8");
+						cmd.add("--classfile");
+						cmd.add(fName + ".jar");
+						cmd.add("--output");
+						cmd.add(fName + "-desugared.jar");
+						for (File lib : MainWindow.libs) {
+							cmd.add("--classpath");
+							cmd.add(lib.getCanonicalPath());
+						}
+						for (PatchEntry entry : MainWindow.patches.values()) {
+							if (entry.type == PatchEntryType.COLLECTION)
+								continue;
+							cmd.add("--classpath");
+							cmd.add(entry.file.getCanonicalPath());
+						}
+						builder = new ProcessBuilder(cmd.toArray(t -> new String[t]));
+						builder.directory(new File("lightray-work"));
+						builder.redirectInput(Redirect.PIPE);
+						builder.redirectOutput(Redirect.PIPE);
+						builder.redirectError(Redirect.PIPE);
+						proc = builder.start();
+						logAsyncFromStream(proc.getInputStream(), "	  [D8] ");
+						logAsyncFromStream(proc.getErrorStream(), "	  [D8] ");
+						proc.waitFor();
+						if (proc.exitValue() != 0)
+							ProgressWindow.WindowLogger.log("Warning! Non-zero exit code for d8!\n\n"
+									+ "This is most commonly caused by a incompatible java environment.\n\n"
+									+ "Try updating your Java installation or try another version of it.\n\n"
+									+ "Exit code: " + proc.exitValue()
+									+ "\n\nThis might have effect on the usability of the apk!");
+						src = fName + "-desugared.jar";
 					}
-					for (PatchEntry entry : MainWindow.patches.values()) {
-						if (entry.type == PatchEntryType.COLLECTION)
-							continue;
-						cmd.add("--classpath");
-						cmd.add(entry.file.getCanonicalPath());
-					}
-					builder = new ProcessBuilder(cmd.toArray(t -> new String[t]));
-					builder.directory(new File("lightray-work"));
-					builder.redirectInput(Redirect.PIPE);
-					builder.redirectOutput(Redirect.PIPE);
-					builder.redirectError(Redirect.PIPE);
-					proc = builder.start();
-					logAsyncFromStream(proc.getInputStream(), "	  [D8] ");
-					logAsyncFromStream(proc.getErrorStream(), "	  [D8] ");
-					proc.waitFor();
-					if (proc.exitValue() != 0)
-						throw new Exception("Non-zero exit code for d8!\n\n"
-								+ "This is most commonly caused by a incompatible java environment.\n\n"
-								+ "Try updating your Java installation or try another version of it.\n\n"
-								+ "Exit code: " + proc.exitValue());
 
 					// Run dx
 					ProgressWindow.WindowLogger.log("    Running dx...");
 					builder = new ProcessBuilder(jvm, "-cp", libs, "com.android.dx.command.Main", "--dex",
 							"--no-strict", "--core-library", "--min-sdk-version", minSdk, "--output",
 							fName + "-patched.dex",
-							fName + "-desugared.jar");
+							src);
 					builder.directory(new File("lightray-work"));
 					builder.redirectInput(Redirect.PIPE);
 					builder.redirectOutput(Redirect.PIPE);
@@ -1273,7 +1285,7 @@ public class MainWindow {
 	}
 
 	private static int copyPatchResources(File source, File outputRoot, int current, float step,
-			ArrayList<String> modFiles, String pref, int i)
+			ArrayList<String> modFiles, String pref, int i, ArrayList<String> dexesInjected)
 			throws IOException, TransformerException, ParserConfigurationException {
 		for (File f : source.listFiles()) {
 			String name = pref + f.getName() + (f.isDirectory() ? "/" : "");
@@ -1283,7 +1295,8 @@ public class MainWindow {
 			if (f.isDirectory()) {
 				out.mkdirs();
 				ProgressWindow.WindowLogger.setValue(current + (int) (step * (float) i++));
-				i = copyPatchResources(f, outputRoot, current, step, modFiles, pref + f.getName() + "/", i);
+				i = copyPatchResources(f, outputRoot, current, step, modFiles, pref + f.getName() + "/", i,
+						dexesInjected);
 			} else {
 				if (name.endsWith(".class")) {
 					// Check if entry specifies a specific class target
@@ -1294,6 +1307,8 @@ public class MainWindow {
 					if (nm.startsWith("dex/classes")) {
 						output = nm.substring(4);
 					}
+					if (!dexesInjected.contains(output.substring(0, output.indexOf("/"))))
+						dexesInjected.add(output.substring(0, output.indexOf("/")));
 
 					// Copy file
 					File outp = new File("lightray-work/" + output);
@@ -1563,22 +1578,27 @@ public class MainWindow {
 		}
 	}
 
-	private static void patchClasses(File dir, String fName, String pref) throws IOException {
+	private static boolean patchClasses(File dir, String fName, String pref) throws IOException {
 		// Scan folder
+		boolean res = false;
 		for (File m : dir.listFiles()) {
-			if (m.isDirectory())
-				patchClasses(m, fName, pref + m.getName() + "/");
-			else if (m.getName().endsWith(".class"))
-				patchClass(m, fName, pref);
+			if (m.isDirectory()) {
+				if (patchClasses(m, fName, pref + m.getName() + "/"))
+					res = true;
+			} else if (m.getName().endsWith(".class")) {
+				if (patchClass(m, fName, pref))
+					res = true;
+			}
 		}
+		return res;
 	}
 
-	private static void patchClass(File classFile, String fName, String pref) throws IOException {
+	private static boolean patchClass(File classFile, String fName, String pref) throws IOException {
 		String className = pref + classFile.getName().substring(0, classFile.getName().lastIndexOf(".class"));
 
 		// Check transformer
 		if (!Transformers.hasTransformers(className))
-			return;
+			return false;
 
 		// Apply patch
 		ProgressWindow.WindowLogger.log("      Patching: " + className);
@@ -1588,6 +1608,7 @@ public class MainWindow {
 			// Write
 			Files.write(classFile.toPath(), modified);
 		}
+		return true;
 	}
 
 	private static void zipAll(File dir, String pref, ZipOutputStream zOut) throws IOException {
