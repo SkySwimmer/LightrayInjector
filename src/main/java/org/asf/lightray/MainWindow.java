@@ -835,9 +835,11 @@ public class MainWindow {
 								File f = new File("lightray-work/axml-mod-bin/" + ent.getName());
 
 								// Save current
+								FileInputStream fIn = new FileInputStream("lightray-work/mods/" + ent.getName());
 								FileOutputStream strmO = new FileOutputStream(f);
-								entStrm.transferTo(strmO);
+								fIn.transferTo(strmO);
 								strmO.close();
+								fIn.close();
 								entStrm = new FileInputStream(f);
 
 								// Decode
