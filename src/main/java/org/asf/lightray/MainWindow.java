@@ -1005,7 +1005,8 @@ public class MainWindow {
 									+ "Try updating your Java installation or try another version of it.\n\n"
 									+ "Exit code: " + proc.exitValue()
 									+ "\n\nThis might have effect on the usability of the apk!");
-						src = fName + "-desugared.jar";
+						else
+							src = fName + "-desugared.jar";
 					}
 
 					// Run dx
