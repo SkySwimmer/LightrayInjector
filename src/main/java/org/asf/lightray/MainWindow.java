@@ -855,7 +855,7 @@ public class MainWindow {
 									// Android manifest
 
 									// Pull API version
-									manifestRoot = androidManifestDom.getDocumentElement();
+									manifestRoot = doc.getDocumentElement();
 									sdkVersion = (Element) manifestRoot.getElementsByTagName("uses-sdk")
 											.item(0);
 									minSdk = sdkVersion.getAttribute("android:minSdkVersion");
