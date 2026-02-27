@@ -622,9 +622,6 @@ public class MainWindow {
 							while (nm.startsWith("/"))
 								nm = nm.substring(1);
 							String output = "classes/" + nm;
-							if (nm.startsWith("dex/classes")) {
-								output = nm.substring(4);
-							}
 							if (!dexesInjected.contains(output.substring(0, output.indexOf("/"))))
 								dexesInjected.add(output.substring(0, output.indexOf("/")));
 
@@ -762,6 +759,8 @@ public class MainWindow {
 		Enumeration<? extends ZipEntry> ents = archive.entries();
 		ZipEntry ent = ents.nextElement();
 		ArrayList<String> existingEntries = new ArrayList<String>();
+		boolean hadDex = false;
+		ArrayList<File> classesFiles = new ArrayList<File>();
 		while (ent != null) {
 			existingEntries.add(ent.getName());
 			ProgressWindow.WindowLogger.log("  Updating " + ent.getName());
@@ -867,7 +866,8 @@ public class MainWindow {
 									appVerName = manifestRoot.getAttribute("android:versionName");
 									ProgressWindow.WindowLogger.log("    Manifest overridden!");
 									ProgressWindow.WindowLogger.log(
-											"    Application: " + pkg + " " + appVerName + " (build " + appVerCode + ")");
+											"    Application: " + pkg + " " + appVerName + " (build " + appVerCode
+													+ ")");
 									ProgressWindow.WindowLogger
 											.log("    Target SDK: " + targetSdk + ", minimal SDK: " + minSdk);
 								}
@@ -921,6 +921,7 @@ public class MainWindow {
 					entStrm.transferTo(strmO);
 					strmO.close();
 					entStrm.close();
+					hadDex = true;
 
 					// Scan libs
 					String jvm = ProcessHandle.current().info().command().get();
@@ -989,10 +990,8 @@ public class MainWindow {
 					clJar.close();
 					outF.close();
 
-					// Source jar
-					String src = fName + ".jar";
-
 					// Check if any user patches were present
+					String src = fName + ".jar";
 					if (hasNewClasses || hasPatchedClasses) {
 						// Run d8
 						ProgressWindow.WindowLogger.log("    Running D8...");
@@ -1033,35 +1032,20 @@ public class MainWindow {
 						else
 							src = fName + "-desugared.jar";
 					}
-
-					// Run dx
-					ProgressWindow.WindowLogger.log("    Running dx...");
-					builder = new ProcessBuilder(jvm, "-cp", libs, "com.android.dx.command.Main", "--dex",
-							"--no-strict", "--core-library", "--min-sdk-version", minSdk, "--output",
-							fName + "-patched.dex",
-							src);
-					builder.directory(new File("lightray-work"));
-					builder.redirectInput(Redirect.PIPE);
-					builder.redirectOutput(Redirect.PIPE);
-					builder.redirectError(Redirect.PIPE);
-					proc = builder.start();
-					logAsyncFromStream(proc.getInputStream(), "	  [DX] ");
-					logAsyncFromStream(proc.getErrorStream(), "	  [DX] ");
-					proc.waitFor();
-					if (proc.exitValue() != 0)
-						throw new Exception("Non-zero exit code for dx!\n\n"
-								+ "This is most commonly caused by a incompatible java environment.\n\n"
-								+ "Try updating your Java installation or try another version of it.\n\n"
-								+ "Exit code: " + proc.exitValue());
+					classesFiles.add(new File("lightray-work", src));
 
 					// Done
-					zipO.putNextEntry(new ZipEntry(ent.getName()));
-					entStrm = new FileInputStream("lightray-work/" + fName + "-patched.dex");
+					entStrm = null;
+					ProgressWindow.WindowLogger
+							.log("    Finished patching classes, they will be re-dexed upon completion.");
+					ProgressWindow.WindowLogger.log("  Class patching finished.");
 					ProgressWindow.WindowLogger.setLabel("Creating modified APK...");
 				} else
 					zipO.putNextEntry(ent);
-				entStrm.transferTo(zipO);
-				entStrm.close();
+				if (entStrm != null) {
+					entStrm.transferTo(zipO);
+					entStrm.close();
+				}
 			} else {
 				zipO.putNextEntry(new ZipEntry(ent.getName()));
 				if (modFiles.contains(ent.getName()))
@@ -1073,6 +1057,91 @@ public class MainWindow {
 			else
 				ent = null;
 			ProgressWindow.WindowLogger.increaseProgress();
+		}
+
+		// Finish class writing
+		if (hadDex) {
+			// Prepare
+			ProgressWindow.WindowLogger.log("Applying patched classes...");
+			String jvm = ProcessHandle.current().info().command().get();
+			String libs = "";
+			for (File lib : new File("dex2jar/lib").listFiles(t -> t.getName().endsWith(".jar"))) {
+				if (libs.isEmpty())
+					libs = "../dex2jar/lib/" + lib.getName();
+				else
+					libs += File.pathSeparator + "../dex2jar/lib/" + lib.getName();
+			}
+
+			// Create zip
+			new File("lightray-work/classes-final").mkdirs();
+			ProgressWindow.WindowLogger.log("  Extracting patched classes...");
+			for (File classes : classesFiles) {
+				ProgressWindow.WindowLogger.log("    Extracting " + classes.getName() + "...");
+				ZipFile archive2 = new ZipFile(classes);
+				Enumeration<? extends ZipEntry> ents2 = archive2.entries();
+				ZipEntry ent2 = ents2.nextElement();
+				while (ent2 != null) {
+					File out = new File("lightray-work/classes-final", ent2.getName());
+					if (!out.exists()) {
+						ProgressWindow.WindowLogger.log("      Extracting " + ent2.getName());
+						if (ent2.isDirectory()) {
+							out.mkdirs();
+						} else {
+							out.getParentFile().mkdirs();
+							FileOutputStream strm = new FileOutputStream(out);
+							archive2.getInputStream(ent2).transferTo(strm);
+							strm.close();
+						}
+					}
+					if (ents2.hasMoreElements())
+						ent2 = ents2.nextElement();
+					else
+						ent2 = null;
+				}
+				archive2.close();
+			}
+
+			// Zip up
+			ProgressWindow.WindowLogger.log("  Zipping patched classes...");
+			FileOutputStream outF = new FileOutputStream("lightray-work/classes-final.jar");
+			ZipOutputStream clJar = new ZipOutputStream(outF);
+			zipAll(new File("lightray-work/classes-final"), "", clJar);
+			clJar.close();
+			outF.close();
+
+			// Run dx
+			new File("lightray-work/dexes-patched").mkdirs();
+			ProgressWindow.WindowLogger.log("  Running dx...");
+			ProcessBuilder builder = new ProcessBuilder(jvm, "-cp", libs, "com.android.dx.command.Main", "--dex",
+					"--no-strict", "--multi-dex", "--core-library", "--min-sdk-version", minSdk, "--output",
+					"dexes-patched",
+					"classes-final.jar");
+			builder.directory(new File("lightray-work"));
+			builder.redirectInput(Redirect.PIPE);
+			builder.redirectOutput(Redirect.PIPE);
+			builder.redirectError(Redirect.PIPE);
+			Process proc = builder.start();
+			logAsyncFromStream(proc.getInputStream(), "	[DX] ");
+			logAsyncFromStream(proc.getErrorStream(), "	[DX] ");
+			proc.waitFor();
+			if (proc.exitValue() != 0)
+				throw new Exception("Non-zero exit code for dx!\n\n"
+						+ "This is most commonly caused by a incompatible java environment.\n\n"
+						+ "Try updating your Java installation or try another version of it.\n\n"
+						+ "Exit code: " + proc.exitValue());
+
+			// Done
+			// Write dexes
+			ProgressWindow.WindowLogger.log("  Adding patched dexes...");
+			for (File dex : new File("lightray-work/dexes-patched").listFiles(t -> t.isFile())) {
+				// Write
+				ProgressWindow.WindowLogger.log("  Adding " + dex.getName() + "...");
+				zipO.putNextEntry(new ZipEntry(dex.getName()));
+				FileInputStream fIn = new FileInputStream(dex);
+				fIn.transferTo(zipO);
+				zipO.closeEntry();
+				fIn.close();
+			}
 		}
 
 		// Add other files
@@ -1332,9 +1401,6 @@ public class MainWindow {
 					while (nm.startsWith("/"))
 						nm = nm.substring(1);
 					String output = "classes/" + nm;
-					if (nm.startsWith("dex/classes")) {
-						output = nm.substring(4);
-					}
 					if (!dexesInjected.contains(output.substring(0, output.indexOf("/"))))
 						dexesInjected.add(output.substring(0, output.indexOf("/")));
 
