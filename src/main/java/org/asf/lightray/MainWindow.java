@@ -507,7 +507,7 @@ public class MainWindow {
 					.log("Downloading Android Build Tools... (note this package is owned by google)");
 			ProgressWindow.WindowLogger.setLabel("Downloading Android Build Tools...");
 			downloadFile("lightray-work/buildtools/build-tools.zip",
-					"https://dl.google.com/android/repository/build-tools_r33-" + platformString() + ".zip");
+					"https://dl.google.com/android/repository/build-tools_r34-" + platformString() + ".zip");
 			ProgressWindow.WindowLogger.log("Extracting buildtools...");
 			extractFile("lightray-work/buildtools/build-tools.zip", "lightray-work/buildtools/build-tools-ext");
 			ProgressWindow.WindowLogger.log("Moving buildtools...");
