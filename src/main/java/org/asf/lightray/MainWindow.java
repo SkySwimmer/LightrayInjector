@@ -498,7 +498,10 @@ public class MainWindow {
 		}
 
 		// Download build tools
-		if (!new File("buildtools/complete-" + minSdk).exists()) {
+		int apiMinD8 = Integer.parseInt(targetSdk);
+		if (apiMinD8 < 28)
+			apiMinD8 = 28;
+		if (!new File("buildtools/complete-" + apiMinD8).exists()) {
 			if (new File("buildtools").exists())
 				deleteDir(new File("buildtools"));
 			new File("buildtools").mkdirs();
@@ -507,7 +510,7 @@ public class MainWindow {
 					.log("Downloading Android Build Tools... (note this package is owned by google)");
 			ProgressWindow.WindowLogger.setLabel("Downloading Android Build Tools...");
 			downloadFile("lightray-work/buildtools/build-tools.zip",
-					"https://dl.google.com/android/repository/build-tools_r" + minSdk + "-" + platformString()
+					"https://dl.google.com/android/repository/build-tools_r" + apiMinD8 + "-" + platformString()
 							+ ".zip");
 			ProgressWindow.WindowLogger.log("Extracting buildtools...");
 			extractFile("lightray-work/buildtools/build-tools.zip", "lightray-work/buildtools/build-tools-ext");
@@ -515,7 +518,7 @@ public class MainWindow {
 			new File("lightray-work/buildtools/build-tools-ext").listFiles(t -> t.isDirectory())[0]
 					.renameTo(new File("buildtools/build-tools"));
 			deleteDir(new File("lightray-work/buildtools"));
-			new File("buildtools/complete-" + minSdk).createNewFile();
+			new File("buildtools/complete-" + apiMinD8).createNewFile();
 		}
 
 		// Create keystore
