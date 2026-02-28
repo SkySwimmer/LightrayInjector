@@ -678,6 +678,40 @@ public class MainWindow {
 				ZipEntry ent = ents.nextElement();
 				int i = 0;
 				while (ent != null) {
+					// Check class compat
+					if (ent.getName().endsWith(".class")) {
+						String nm = ent.getName().replace("\\", "/");
+						while (nm.startsWith("/"))
+							nm = nm.substring(1);
+						String output = "classes/" + nm;
+						if (nm.startsWith("dex/classes")) {
+							output = nm.substring(4);
+						}
+
+						// Check if META-INF/versions
+						String className = output.substring(output.indexOf("/") + 1);
+						if (className.startsWith("META-INF/versions/")) {
+							// Get version
+							String ver = className.substring("META-INF/versions/".length());
+							ver = ver.substring(0, ver.indexOf("/"));
+							if (ver.matches("^[0-9]+$")) {
+								// Java version
+								int jvmVersion = Integer.parseInt(ver);
+
+								// Check
+								int api = Integer.parseInt(minSdk);
+								int maxJvmVer = getMaxJvmVer(api);
+								if (jvmVersion > maxJvmVer) {
+									// Skip
+
+									// Incompatible
+									continue;
+								}
+							}
+						}
+					}
+
+					// Log
 					ProgressWindow.WindowLogger.log("  Extracting " + ent.getName());
 					modFiles.add(ent.getName());
 					File out = new File("lightray-work/mods", ent.getName());
@@ -712,32 +746,10 @@ public class MainWindow {
 							strm.close();
 							modFiles.remove(ent.getName());
 
-							// Check if META-INF/versions
-							String className = output.substring(output.indexOf("/") + 1);
-							if (className.startsWith("META-INF/versions/")) {
-								// Get version
-								String ver = className.substring("META-INF/versions/".length());
-								ver = ver.substring(0, ver.indexOf("/"));
-								if (ver.matches("^[0-9]+$")) {
-									// Java version
-									int jvmVersion = Integer.parseInt(ver);
-
-									// Check
-									int api = Integer.parseInt(minSdk);
-									int maxJvmVer = getMaxJvmVer(api);
-									if (jvmVersion > maxJvmVer) {
-										// Skip
-
-										// Incompatible
-										fList.remove(output);
-										outp.delete();
-									}
-								}
-							}
-
 							// Check node
-							if (outp.exists() && !checkClassVersion(entry.file, output.substring(output.indexOf("/") + 1),
-									Integer.parseInt(minSdk))) {
+							if (outp.exists()
+									&& !checkClassVersion(entry.file, output.substring(output.indexOf("/") + 1),
+											Integer.parseInt(minSdk))) {
 								// Incompatible
 								fList.remove(output);
 								outp.delete();
@@ -1634,11 +1646,45 @@ public class MainWindow {
 			modFiles.add(name);
 			File out = new File("lightray-work/mods", name);
 			if (f.isDirectory()) {
-				out.mkdirs();
 				ProgressWindow.WindowLogger.setValue(current + (int) (step * (float) i++));
 				i = copyPatchResources(f, outputRoot, current, step, modFiles, pref + f.getName() + "/", i,
 						dexesInjected, modClassBundles, entry, minSdk, pool);
 			} else {
+				// Check class compat
+				if (name.endsWith(".class")) {
+					String nm = name;
+					while (nm.startsWith("/"))
+						nm = nm.substring(1);
+					String output = "classes/" + nm;
+					if (nm.startsWith("dex/classes")) {
+						output = nm.substring(4);
+					}
+
+					// Check if META-INF/versions
+					String className = output.substring(output.indexOf("/") + 1);
+					if (className.startsWith("META-INF/versions/")) {
+						// Get version
+						String ver = className.substring("META-INF/versions/".length());
+						ver = ver.substring(0, ver.indexOf("/"));
+						if (ver.matches("^[0-9]+$")) {
+							// Java version
+							int jvmVersion = Integer.parseInt(ver);
+
+							// Check
+							int api = Integer.parseInt(minSdk);
+							int maxJvmVer = getMaxJvmVer(api);
+							if (jvmVersion > maxJvmVer) {
+								// Skip
+
+								// Incompatible
+								continue;
+							}
+						}
+					}
+				}
+
+				// Handle
+				out.getParentFile().mkdirs();
 				if (name.endsWith(".class")) {
 					// Check if entry specifies a specific class target
 					String nm = name;
@@ -1668,29 +1714,6 @@ public class MainWindow {
 					strm.close();
 					inp.close();
 					modFiles.remove(name);
-
-					// Check if META-INF/versions
-					String className = output.substring(output.indexOf("/") + 1);
-					if (className.startsWith("META-INF/versions/")) {
-						// Get version
-						String ver = className.substring("META-INF/versions/".length());
-						ver = ver.substring(0, ver.indexOf("/"));
-						if (ver.matches("^[0-9]+$")) {
-							// Java version
-							int jvmVersion = Integer.parseInt(ver);
-
-							// Check
-							int api = Integer.parseInt(minSdk);
-							int maxJvmVer = getMaxJvmVer(api);
-							if (jvmVersion > maxJvmVer) {
-								// Skip
-
-								// Incompatible
-								fList.remove(output);
-								outp.delete();
-							}
-						}
-					}
 
 					// Check node
 					if (outp.exists() && !checkClassVersion(entry.file, output.substring(output.indexOf("/") + 1),
