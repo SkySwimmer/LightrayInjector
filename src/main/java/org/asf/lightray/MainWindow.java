@@ -705,6 +705,7 @@ public class MainWindow {
 									// Skip
 
 									// Incompatible
+									ent = ents.nextElement();
 									continue;
 								}
 							}
@@ -712,12 +713,12 @@ public class MainWindow {
 					}
 
 					// Log
-					ProgressWindow.WindowLogger.log("  Extracting " + ent.getName());
 					modFiles.add(ent.getName());
 					File out = new File("lightray-work/mods", ent.getName());
 					if (ent.isDirectory()) {
 						out.mkdirs();
 					} else {
+						ProgressWindow.WindowLogger.log("  Extracting " + ent.getName());
 						if (ent.getName().endsWith(".class")) {
 							// Check if entry specifies a specific class target
 							String nm = ent.getName().replace("\\", "/");
@@ -1642,7 +1643,6 @@ public class MainWindow {
 			throws IOException, TransformerException, ParserConfigurationException {
 		for (File f : source.listFiles()) {
 			String name = pref + f.getName() + (f.isDirectory() ? "/" : "");
-			ProgressWindow.WindowLogger.log("  Extracting " + name);
 			modFiles.add(name);
 			File out = new File("lightray-work/mods", name);
 			if (f.isDirectory()) {
@@ -1684,6 +1684,7 @@ public class MainWindow {
 				}
 
 				// Handle
+				ProgressWindow.WindowLogger.log("  Extracting " + name);
 				out.getParentFile().mkdirs();
 				if (name.endsWith(".class")) {
 					// Check if entry specifies a specific class target
