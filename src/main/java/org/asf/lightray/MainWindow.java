@@ -592,6 +592,7 @@ public class MainWindow {
 		ProgressWindow.WindowLogger.setLabel("Loading modifications...");
 		ProgressWindow.WindowLogger.log("Extracting mod resources...");
 		ArrayList<String> dexesInjected = new ArrayList<String>();
+		HashMap<String, ArrayList<String>> modClassBundles = new HashMap<String, ArrayList<String>>();
 		for (PatchEntry entry : patches) {
 			// Skip collections
 			if (entry.type == PatchEntryType.COLLECTION)
@@ -622,11 +623,22 @@ public class MainWindow {
 							while (nm.startsWith("/"))
 								nm = nm.substring(1);
 							String output = "classes/" + nm;
+							if (nm.startsWith("dex/classes")) {
+								output = nm.substring(4);
+							}
 							if (!dexesInjected.contains(output.substring(0, output.indexOf("/"))))
 								dexesInjected.add(output.substring(0, output.indexOf("/")));
 
+							// Get or create list
+							ArrayList<String> fList = modClassBundles.get(entry.name);
+							if (fList == null) {
+								fList = new ArrayList<String>();
+								modClassBundles.put(entry.name, fList);
+							}
+
 							// Copy file
-							File outp = new File("lightray-work/" + output);
+							File outp = new File("lightray-work/mod-classes/" + output);
+							fList.add(output);
 							outp.getParentFile().mkdirs();
 							FileOutputStream strm = new FileOutputStream(outp);
 							archive.getInputStream(ent).transferTo(strm);
@@ -658,9 +670,11 @@ public class MainWindow {
 					// Check classes
 					for (ClassNode node : pool.getLoadedClasses()) {
 						if (AnnotationInfo.isAnnotationPresent(FluidTransformer.class, node)) {
-							if (new File("lightray-work/classes/" + node.name + ".class").exists()) {
-								new File("lightray-work/classes/" + node.name + ".class").delete();
-								ProgressWindow.WindowLogger.log("  Removed " + node.name + ".class");
+							for (File dir : new File("lightray-work/mod-classes").listFiles(t -> t.isDirectory())) {
+								if (new File(dir, node.name + ".class").exists()) {
+									new File(dir, node.name + ".class").delete();
+									ProgressWindow.WindowLogger.log("  Removed " + node.name + ".class");
+								}
 							}
 						}
 					}
@@ -673,7 +687,8 @@ public class MainWindow {
 
 				// Copy
 				File out = new File("lightray-work/mods");
-				copyPatchResources(entry.file, out, current, step, modFiles, "", 0, dexesInjected);
+				copyPatchResources(entry.file, out, current, step, modFiles, "", 0, dexesInjected, modClassBundles,
+						entry);
 				ProgressWindow.WindowLogger.setValue(current + 100);
 
 				// Determine type
@@ -685,9 +700,11 @@ public class MainWindow {
 					// Check classes
 					for (ClassNode node : pool.getLoadedClasses()) {
 						if (AnnotationInfo.isAnnotationPresent(FluidTransformer.class, node)) {
-							if (new File("lightray-work/classes/" + node.name + ".class").exists()) {
-								new File("lightray-work/classes/" + node.name + ".class").delete();
-								ProgressWindow.WindowLogger.log("  Removed " + node.name + ".class");
+							for (File dir : new File("lightray-work/mod-classes").listFiles(t -> t.isDirectory())) {
+								if (new File(dir, node.name + ".class").exists()) {
+									new File(dir, node.name + ".class").delete();
+									ProgressWindow.WindowLogger.log("  Removed " + node.name + ".class");
+								}
 							}
 						}
 					}
@@ -759,8 +776,6 @@ public class MainWindow {
 		Enumeration<? extends ZipEntry> ents = archive.entries();
 		ZipEntry ent = ents.nextElement();
 		ArrayList<String> existingEntries = new ArrayList<String>();
-		boolean hadDex = false;
-		ArrayList<File> classesFiles = new ArrayList<File>();
 		while (ent != null) {
 			existingEntries.add(ent.getName());
 			ProgressWindow.WindowLogger.log("  Updating " + ent.getName());
@@ -921,7 +936,6 @@ public class MainWindow {
 					entStrm.transferTo(strmO);
 					strmO.close();
 					entStrm.close();
-					hadDex = true;
 
 					// Scan libs
 					String jvm = ProcessHandle.current().info().command().get();
@@ -952,10 +966,13 @@ public class MainWindow {
 					new File("lightray-work/" + fName).mkdirs();
 					Enumeration<? extends ZipEntry> ents2 = archive2.entries();
 					ZipEntry ent2 = ents2.nextElement();
+					ArrayList<String> files = new ArrayList<String>();
 					while (ent2 != null) {
 						File out = new File("lightray-work/" + fName, ent2.getName());
-						if (!out.exists()) { // Check if it exists, if it does its a patcher overriding
-												// it
+						if (!ent2.isDirectory())
+							files.add(ent2.getName());
+						if (!out.exists()) {
+							// Check if it exists, if it does its a patcher overriding it
 							ProgressWindow.WindowLogger.log("      Extracting " + ent2.getName());
 							if (ent2.isDirectory()) {
 								out.mkdirs();
@@ -973,7 +990,42 @@ public class MainWindow {
 					}
 					archive2.close();
 					ProgressWindow.WindowLogger.log("    Patching classes...");
-					ProgressWindow.WindowLogger.setLabel("    Patching classes...");
+
+					// Install modified classes
+					ProgressWindow.WindowLogger.log("    Installing modified classes...");
+					for (String file : files) {
+						File out = new File("lightray-work/" + fName, file);
+						File modded = new File("lightray-work/mod-classes/" + fName + "/" + file);
+						File moddedAlt = new File("lightray-work/mod-classes/classes/" + file);
+						if (modded.exists()) {
+							// Log
+							ProgressWindow.WindowLogger.log("        Installing " + file + "...");
+
+							// Delete old
+							out.delete();
+
+							// Copy
+							Files.copy(modded.toPath(), out.toPath());
+
+							// Delete
+							modded.delete();
+						} else if (moddedAlt.exists()) {
+							// Log
+							ProgressWindow.WindowLogger.log("        Installing " + file + "...");
+
+							// Delete old
+							out.delete();
+
+							// Copy
+							Files.copy(moddedAlt.toPath(), out.toPath());
+
+							// Delete
+							moddedAlt.delete();
+						}
+					}
+
+					// Patch with transformers
+					ProgressWindow.WindowLogger.log("    Patching classes with transformers...");
 
 					// Patch classes
 					File jar = new File("lightray-work/" + fName + "-dex2jar.jar");
@@ -1032,13 +1084,30 @@ public class MainWindow {
 						else
 							src = fName + "-desugared.jar";
 					}
-					classesFiles.add(new File("lightray-work", src));
+
+					// Run dx
+					ProgressWindow.WindowLogger.log("    Running dx...");
+					builder = new ProcessBuilder(jvm, "-cp", libs, "com.android.dx.command.Main", "--dex",
+							"--no-strict", "--core-library", "--min-sdk-version", minSdk, "--output",
+							fName + "-patched.dex",
+							src);
+					builder.directory(new File("lightray-work"));
+					builder.redirectInput(Redirect.PIPE);
+					builder.redirectOutput(Redirect.PIPE);
+					builder.redirectError(Redirect.PIPE);
+					proc = builder.start();
+					logAsyncFromStream(proc.getInputStream(), "	  [DX] ");
+					logAsyncFromStream(proc.getErrorStream(), "	  [DX] ");
+					proc.waitFor();
+					if (proc.exitValue() != 0)
+						throw new Exception("Non-zero exit code for dx!\n\n"
+								+ "This is most commonly caused by a incompatible java environment.\n\n"
+								+ "Try updating your Java installation or try another version of it.\n\n"
+								+ "Exit code: " + proc.exitValue());
 
 					// Done
-					entStrm = null;
-					ProgressWindow.WindowLogger
-							.log("    Finished patching classes, they will be re-dexed upon completion.");
-					ProgressWindow.WindowLogger.log("  Class patching finished.");
+					zipO.putNextEntry(new ZipEntry(ent.getName()));
+					entStrm = new FileInputStream("lightray-work/" + fName + "-patched.dex");
 					ProgressWindow.WindowLogger.setLabel("Creating modified APK...");
 				} else
 					zipO.putNextEntry(ent);
@@ -1059,97 +1128,151 @@ public class MainWindow {
 			ProgressWindow.WindowLogger.increaseProgress();
 		}
 
-		// Finish class writing
-		if (hadDex) {
-			// Prepare
-			ProgressWindow.WindowLogger.log("Applying patched classes...");
-			String jvm = ProcessHandle.current().info().command().get();
-			String libs = "";
-			for (File lib : new File("dex2jar/lib").listFiles(t -> t.getName().endsWith(".jar"))) {
-				if (libs.isEmpty())
-					libs = "../dex2jar/lib/" + lib.getName();
-				else
-					libs += File.pathSeparator + "../dex2jar/lib/" + lib.getName();
-			}
+		// Add remaining classes by patch, each one library
+		ProgressWindow.WindowLogger.log("Adding remaining classes...");
+		ProgressWindow.WindowLogger.setLabel("Injecting new classes...");
+		for (String bundle : modClassBundles.keySet()) {
+			ArrayList<String> files = modClassBundles.get(bundle);
 
-			// Create zip
-			new File("lightray-work/classes-final").mkdirs();
-			ProgressWindow.WindowLogger.log("  Extracting patched classes...");
-			for (File classes : classesFiles) {
-				ProgressWindow.WindowLogger.log("    Extracting " + classes.getName() + "...");
-				ZipFile archive2 = new ZipFile(classes);
-				Enumeration<? extends ZipEntry> ents2 = archive2.entries();
-				ZipEntry ent2 = ents2.nextElement();
-				while (ent2 != null) {
-					File out = new File("lightray-work/classes-final", ent2.getName());
-					if (!out.exists()) {
-						ProgressWindow.WindowLogger.log("      Extracting " + ent2.getName());
-						if (ent2.isDirectory()) {
-							out.mkdirs();
-						} else {
-							out.getParentFile().mkdirs();
-							FileOutputStream strm = new FileOutputStream(out);
-							archive2.getInputStream(ent2).transferTo(strm);
-							strm.close();
-						}
-					}
-					if (ents2.hasMoreElements())
-						ent2 = ents2.nextElement();
-					else
-						ent2 = null;
+			// Check if contents are present
+			if (files.stream().anyMatch(t -> new File("lightray-work/mod-classes", t).exists())) {
+				// Create dex for this
+				ProgressWindow.WindowLogger.log("  Adding classes for " + bundle + "...");
+
+				// Get dex name
+				int i = 2;
+				File dexOut = new File("lightray-work/classes" + i);
+				while (dexOut.exists()) {
+					i++;
+					dexOut = new File("lightray-work/classes" + i);
 				}
-				archive2.close();
-			}
 
-			// Zip up
-			ProgressWindow.WindowLogger.log("  Zipping patched classes...");
-			FileOutputStream outF = new FileOutputStream("lightray-work/classes-final.jar");
-			ZipOutputStream clJar = new ZipOutputStream(outF);
-			zipAll(new File("lightray-work/classes-final"), "", clJar);
-			clJar.close();
-			outF.close();
+				// Create dex folder
+				dexOut.mkdirs();
+				ProgressWindow.WindowLogger.log("    Finding classes for " + bundle + "...");
+				String fName = dexOut.getName();
+				for (String file : files) {
+					File fSource = new File("lightray-work/mod-classes/" + file);
+					File fOut = new File(dexOut, file);
+					String name = file.substring(file.indexOf("/") + 1);
+					if (fSource.exists()) {
+						// Copy file
+						ProgressWindow.WindowLogger.log("      Adding " + name + "...");
+						fOut.getParentFile().mkdirs();
+						if (fOut.exists())
+							fOut.delete();
+						Files.copy(fSource.toPath(), fOut.toPath());
+					}
+				}
 
-			// Run dx
-			new File("lightray-work/dexes-patched").mkdirs();
-			ProgressWindow.WindowLogger.log("  Running dx...");
-			ProcessBuilder builder = new ProcessBuilder(jvm, "-cp", libs, "com.android.dx.command.Main", "--dex",
-					"--no-strict", "--multi-dex", "--core-library", "--min-sdk-version", minSdk, "--output",
-					"dexes-patched",
-					"classes-final.jar");
-			builder.directory(new File("lightray-work"));
-			builder.redirectInput(Redirect.PIPE);
-			builder.redirectOutput(Redirect.PIPE);
-			builder.redirectError(Redirect.PIPE);
-			Process proc = builder.start();
-			logAsyncFromStream(proc.getInputStream(), "	[DX] ");
-			logAsyncFromStream(proc.getErrorStream(), "	[DX] ");
-			proc.waitFor();
-			if (proc.exitValue() != 0)
-				throw new Exception("Non-zero exit code for dx!\n\n"
-						+ "This is most commonly caused by a incompatible java environment.\n\n"
-						+ "Try updating your Java installation or try another version of it.\n\n"
-						+ "Exit code: " + proc.exitValue());
+				// Install dex
+				ProgressWindow.WindowLogger.log("  Creating dex for " + bundle + "...");
 
-			// Done
-			// Write dexes
-			ProgressWindow.WindowLogger.log("  Adding patched dexes...");
-			for (File dex : new File("lightray-work/dexes-patched").listFiles(t -> t.isFile())) {
-				// Write
-				ProgressWindow.WindowLogger.log("  Adding " + dex.getName() + "...");
-				zipO.putNextEntry(new ZipEntry(dex.getName()));
-				FileInputStream fIn = new FileInputStream(dex);
-				fIn.transferTo(zipO);
+				// Patch with transformers
+				ProgressWindow.WindowLogger.log("    Patching classes with transformers...");
+
+				// Patch classes
+				File jar = new File("lightray-work/" + fName + "-dex2jar.jar");
+				pool.addSource(jar);
+				Transformers.addClassSource(jar);
+				patchClasses(new File("lightray-work/" + fName), fName, "");
+
+				// Re-zip
+				ProgressWindow.WindowLogger.log("    Zipping classes...");
+				FileOutputStream outF = new FileOutputStream("lightray-work/" + fName + ".jar");
+				ZipOutputStream clJar = new ZipOutputStream(outF);
+				zipAll(new File("lightray-work/" + fName), "", clJar);
+				clJar.close();
+				outF.close();
+
+				// Scan libs
+				String jvm = ProcessHandle.current().info().command().get();
+				String libs = "";
+				for (File lib : new File("dex2jar/lib").listFiles(t -> t.getName().endsWith(".jar"))) {
+					if (libs.isEmpty())
+						libs = "../dex2jar/lib/" + lib.getName();
+					else
+						libs += File.pathSeparator + "../dex2jar/lib/" + lib.getName();
+				}
+
+				// Check if any user patches were present
+				String src = fName + ".jar";
+
+				// Run d8
+				ProgressWindow.WindowLogger.log("    Running D8...");
+				ArrayList<String> cmd = new ArrayList<String>();
+				cmd.add(jvm);
+				cmd.add("-cp");
+				cmd.add(new File("buildtools/build-tools/lib/d8.jar").getCanonicalPath());
+				cmd.add("com.android.tools.r8.D8");
+				cmd.add("--classfile");
+				cmd.add(fName + ".jar");
+				cmd.add("--output");
+				cmd.add(fName + "-desugared.jar");
+				for (File lib : MainWindow.libs) {
+					cmd.add("--classpath");
+					cmd.add(lib.getCanonicalPath());
+				}
+				for (PatchEntry entry : MainWindow.patches.values()) {
+					if (entry.type == PatchEntryType.COLLECTION)
+						continue;
+					cmd.add("--classpath");
+					cmd.add(entry.file.getCanonicalPath());
+				}
+				ProcessBuilder builder = new ProcessBuilder(cmd.toArray(t -> new String[t]));
+				builder.directory(new File("lightray-work"));
+				builder.redirectInput(Redirect.PIPE);
+				builder.redirectOutput(Redirect.PIPE);
+				builder.redirectError(Redirect.PIPE);
+				Process proc = builder.start();
+				logAsyncFromStream(proc.getInputStream(), "	  [D8] ");
+				logAsyncFromStream(proc.getErrorStream(), "	  [D8] ");
+				proc.waitFor();
+				if (proc.exitValue() != 0)
+					ProgressWindow.WindowLogger.log("Warning! Non-zero exit code for d8!\n\n"
+							+ "This is most commonly caused by a incompatible java environment.\n\n"
+							+ "Try updating your Java installation or try another version of it.\n\n"
+							+ "Exit code: " + proc.exitValue()
+							+ "\n\nThis might have effect on the usability of the apk!");
+				else
+					src = fName + "-desugared.jar";
+
+				// Run dx
+				ProgressWindow.WindowLogger.log("    Running dx...");
+				builder = new ProcessBuilder(jvm, "-cp", libs, "com.android.dx.command.Main", "--dex",
+						"--no-strict", "--core-library", "--min-sdk-version", minSdk, "--output",
+						fName + "-patched.dex",
+						src);
+				builder.directory(new File("lightray-work"));
+				builder.redirectInput(Redirect.PIPE);
+				builder.redirectOutput(Redirect.PIPE);
+				builder.redirectError(Redirect.PIPE);
+				proc = builder.start();
+				logAsyncFromStream(proc.getInputStream(), "	  [DX] ");
+				logAsyncFromStream(proc.getErrorStream(), "	  [DX] ");
+				proc.waitFor();
+				if (proc.exitValue() != 0)
+					throw new Exception("Non-zero exit code for dx!\n\n"
+							+ "This is most commonly caused by a incompatible java environment.\n\n"
+							+ "Try updating your Java installation or try another version of it.\n\n"
+							+ "Exit code: " + proc.exitValue());
+
+				// Done
+				zipO.putNextEntry(new ZipEntry(fName + ".dex"));
+				FileInputStream entStrm = new FileInputStream("lightray-work/" + fName + "-patched.dex");
+				entStrm.transferTo(zipO);
+				entStrm.close();
 				zipO.closeEntry();
-				fIn.close();
 			}
 		}
+		ProgressWindow.WindowLogger.setLabel("Creating modified APK...");
 
 		// Add other files
 		ProgressWindow.WindowLogger.log("Adding remaining files...");
 		for (String file : new ArrayList<String>(modFiles)) {
 			if (existingEntries.contains(file) || file.endsWith("/")) {
 				ProgressWindow.WindowLogger.increaseProgress();
-				continue;// Skip
+				continue; // Skip
 			}
 			existingEntries.add(file);
 			ent = new ZipEntry(file);
@@ -1382,7 +1505,8 @@ public class MainWindow {
 	}
 
 	private static int copyPatchResources(File source, File outputRoot, int current, float step,
-			ArrayList<String> modFiles, String pref, int i, ArrayList<String> dexesInjected)
+			ArrayList<String> modFiles, String pref, int i, ArrayList<String> dexesInjected,
+			HashMap<String, ArrayList<String>> modClassBundles, PatchEntry entry)
 			throws IOException, TransformerException, ParserConfigurationException {
 		for (File f : source.listFiles()) {
 			String name = pref + f.getName() + (f.isDirectory() ? "/" : "");
@@ -1393,7 +1517,7 @@ public class MainWindow {
 				out.mkdirs();
 				ProgressWindow.WindowLogger.setValue(current + (int) (step * (float) i++));
 				i = copyPatchResources(f, outputRoot, current, step, modFiles, pref + f.getName() + "/", i,
-						dexesInjected);
+						dexesInjected, modClassBundles, entry);
 			} else {
 				if (name.endsWith(".class")) {
 					// Check if entry specifies a specific class target
@@ -1401,11 +1525,22 @@ public class MainWindow {
 					while (nm.startsWith("/"))
 						nm = nm.substring(1);
 					String output = "classes/" + nm;
+					if (nm.startsWith("dex/classes")) {
+						output = nm.substring(4);
+					}
 					if (!dexesInjected.contains(output.substring(0, output.indexOf("/"))))
 						dexesInjected.add(output.substring(0, output.indexOf("/")));
 
+					// Get or create list
+					ArrayList<String> fList = modClassBundles.get(entry.name);
+					if (fList == null) {
+						fList = new ArrayList<String>();
+						modClassBundles.put(entry.name, fList);
+					}
+
 					// Copy file
-					File outp = new File("lightray-work/" + output);
+					File outp = new File("lightray-work/mod-classes/" + output);
+					fList.add(output);
 					outp.getParentFile().mkdirs();
 					FileOutputStream strm = new FileOutputStream(outp);
 					InputStream inp = new FileInputStream(f);

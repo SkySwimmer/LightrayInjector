@@ -156,7 +156,7 @@ public class ProgressWindow {
 
 		});
 		frm.setBounds(100, 100, 672, 245);
-		frm.setResizable(false);
+		frm.setResizable(true);
 		frm.setLocationRelativeTo(null);
 		contentPane = new JPanel();
 		contentPane.setBorder(new EmptyBorder(5, 5, 5, 5));
