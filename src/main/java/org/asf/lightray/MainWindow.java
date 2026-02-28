@@ -708,7 +708,10 @@ public class MainWindow {
 									// Skip
 
 									// Incompatible
-									ent = ents.nextElement();
+									if (ents.hasMoreElements())
+										ent = ents.nextElement();
+									else
+										break;
 									continue;
 								}
 							}
