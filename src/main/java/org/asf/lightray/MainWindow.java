@@ -608,7 +608,6 @@ public class MainWindow {
 				if (ent != null) {
 					fIn = ar.getInputStream(ent);
 				}
-				ar.close();
 			} else {
 				// Find entry
 				File ent = new File(entry.file, "AndroidManifest.xml");
