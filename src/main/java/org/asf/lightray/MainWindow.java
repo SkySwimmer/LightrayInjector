@@ -512,7 +512,7 @@ public class MainWindow {
 			ProgressWindow.WindowLogger.log("Extracting buildtools...");
 			extractFile("lightray-work/buildtools/build-tools.zip", "lightray-work/buildtools/build-tools-ext");
 			ProgressWindow.WindowLogger.log("Moving buildtools...");
-			new File("lightray-work/buildtools/build-tools-ext/android-13")
+			new File("lightray-work/buildtools/build-tools-ext").listFiles(t -> t.isDirectory())[0]
 					.renameTo(new File("buildtools/build-tools"));
 			deleteDir(new File("lightray-work/buildtools"));
 			new File("buildtools/complete-" + minSdk).createNewFile();
