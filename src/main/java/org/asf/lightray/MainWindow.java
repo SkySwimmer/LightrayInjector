@@ -515,7 +515,7 @@ public class MainWindow {
 			new File("lightray-work/buildtools/build-tools-ext/android-13")
 					.renameTo(new File("buildtools/build-tools"));
 			deleteDir(new File("lightray-work/buildtools"));
-			new File("buildtools/complete").createNewFile();
+			new File("buildtools/complete-" + minSdk).createNewFile();
 		}
 
 		// Create keystore
