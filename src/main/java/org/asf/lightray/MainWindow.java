@@ -533,8 +533,8 @@ public class MainWindow {
 			Process proc = builder.start();
 			proc.getOutputStream().write("appmod\nappmod\n\n\n\n\n\n\nyes".getBytes());
 			proc.getOutputStream().close();
-			logAsyncFromStream(proc.getInputStream(), "	  [KEYTOOL] ");
-			logAsyncFromStream(proc.getErrorStream(), "	  [KEYTOOL] ");
+			logAsyncFromStream(proc.getInputStream(), "    [KEYTOOL] ");
+			logAsyncFromStream(proc.getErrorStream(), "    [KEYTOOL] ");
 			proc.waitFor();
 			if (proc.exitValue() != 0)
 				throw new Exception("Non-zero exit code for KEYTOOL.");
@@ -1042,8 +1042,8 @@ public class MainWindow {
 					builder.redirectOutput(Redirect.PIPE);
 					builder.redirectError(Redirect.PIPE);
 					Process proc = builder.start();
-					logAsyncFromStream(proc.getInputStream(), "	  [DEX2JAR] ");
-					logAsyncFromStream(proc.getErrorStream(), "	  [DEX2JAR] ");
+					logAsyncFromStream(proc.getInputStream(), "    [DEX2JAR] ");
+					logAsyncFromStream(proc.getErrorStream(), "    [DEX2JAR] ");
 					proc.waitFor();
 					if (proc.exitValue() != 0)
 						throw new Exception("Non-zero exit code for dex2jar!\n\n"
@@ -1161,15 +1161,15 @@ public class MainWindow {
 						builder.redirectOutput(Redirect.PIPE);
 						builder.redirectError(Redirect.PIPE);
 						proc = builder.start();
-						logAsyncFromStream(proc.getInputStream(), "	  [D8] ");
-						logAsyncFromStream(proc.getErrorStream(), "	  [D8] ");
+						logAsyncFromStream(proc.getInputStream(), "    [D8] ");
+						logAsyncFromStream(proc.getErrorStream(), "    [D8] ");
 						proc.waitFor();
 						if (proc.exitValue() != 0)
-							ProgressWindow.WindowLogger.log("Warning! Non-zero exit code for d8!\n\n"
-									+ "This is most commonly caused by a incompatible java environment.\n\n"
-									+ "Try updating your Java installation or try another version of it.\n\n"
-									+ "Exit code: " + proc.exitValue()
-									+ "\n\nThis might have effect on the usability of the apk!");
+							ProgressWindow.WindowLogger.log("	Warning! Non-zero exit code for d8!\n\n"
+									+ "    This is most commonly caused by a incompatible java environment.\n\n"
+									+ "    Try updating your Java installation or try another version of it.\n\n"
+									+ "    Exit code: " + proc.exitValue()
+									+ "\n\n    This might have effect on the usability of the apk!");
 						else
 							src = fName + "-desugared.jar";
 					}
@@ -1185,8 +1185,8 @@ public class MainWindow {
 					builder.redirectOutput(Redirect.PIPE);
 					builder.redirectError(Redirect.PIPE);
 					proc = builder.start();
-					logAsyncFromStream(proc.getInputStream(), "	  [DX] ");
-					logAsyncFromStream(proc.getErrorStream(), "	  [DX] ");
+					logAsyncFromStream(proc.getInputStream(), "    [DX] ");
+					logAsyncFromStream(proc.getErrorStream(), "    [DX] ");
 					proc.waitFor();
 					if (proc.exitValue() != 0)
 						throw new Exception("Non-zero exit code for dx!\n\n"
@@ -1314,15 +1314,15 @@ public class MainWindow {
 				builder.redirectOutput(Redirect.PIPE);
 				builder.redirectError(Redirect.PIPE);
 				Process proc = builder.start();
-				logAsyncFromStream(proc.getInputStream(), "	  [D8] ");
-				logAsyncFromStream(proc.getErrorStream(), "	  [D8] ");
+				logAsyncFromStream(proc.getInputStream(), "    [D8] ");
+				logAsyncFromStream(proc.getErrorStream(), "    [D8] ");
 				proc.waitFor();
 				if (proc.exitValue() != 0)
-					ProgressWindow.WindowLogger.log("Warning! Non-zero exit code for d8!\n\n"
-							+ "This is most commonly caused by a incompatible java environment.\n\n"
-							+ "Try updating your Java installation or try another version of it.\n\n"
-							+ "Exit code: " + proc.exitValue()
-							+ "\n\nThis might have effect on the usability of the apk!");
+					ProgressWindow.WindowLogger.log("    Warning! Non-zero exit code for d8!\n\n"
+							+ "    This is most commonly caused by a incompatible java environment.\n\n"
+							+ "    Try updating your Java installation or try another version of it.\n\n"
+							+ "    Exit code: " + proc.exitValue()
+							+ "\n\n    This might have effect on the usability of the apk!");
 				else
 					src = fName + "-desugared.jar";
 
@@ -1337,8 +1337,8 @@ public class MainWindow {
 				builder.redirectOutput(Redirect.PIPE);
 				builder.redirectError(Redirect.PIPE);
 				proc = builder.start();
-				logAsyncFromStream(proc.getInputStream(), "	  [DX] ");
-				logAsyncFromStream(proc.getErrorStream(), "	  [DX] ");
+				logAsyncFromStream(proc.getInputStream(), "    [DX] ");
+				logAsyncFromStream(proc.getErrorStream(), "    [DX] ");
 				proc.waitFor();
 				if (proc.exitValue() != 0)
 					throw new Exception("Non-zero exit code for dx!\n\n"
@@ -1457,8 +1457,8 @@ public class MainWindow {
 		builder.redirectOutput(Redirect.PIPE);
 		builder.redirectError(Redirect.PIPE);
 		Process proc = builder.start();
-		logAsyncFromStream(proc.getInputStream(), "	  [ZIPALIGN] ");
-		logAsyncFromStream(proc.getErrorStream(), "	  [ZIPALIGN] ");
+		logAsyncFromStream(proc.getInputStream(), "    [ZIPALIGN] ");
+		logAsyncFromStream(proc.getErrorStream(), "    [ZIPALIGN] ");
 		proc.waitFor();
 		if (proc.exitValue() != 0)
 			throw new Exception("Non-zero exit code for ZIPALIGN!\n\n"
@@ -1488,8 +1488,8 @@ public class MainWindow {
 		proc = builder.start();
 		proc.getOutputStream().write("appmod\n".getBytes());
 		proc.getOutputStream().close();
-		logAsyncFromStream(proc.getInputStream(), "	  [APKSIGNER] ");
-		logAsyncFromStream(proc.getErrorStream(), "	  [APKSIGNER] ");
+		logAsyncFromStream(proc.getInputStream(), "    [APKSIGNER] ");
+		logAsyncFromStream(proc.getErrorStream(), "    [APKSIGNER] ");
 		proc.waitFor();
 		if (proc.exitValue() != 0)
 			throw new Exception("Non-zero exit code for APKSIGNER!\n\n"
