@@ -590,6 +590,73 @@ public class MainWindow {
 		ProgressWindow.WindowLogger.setValue(0);
 		ProgressWindow.WindowLogger.log("Loading modifications...");
 		ProgressWindow.WindowLogger.setLabel("Loading modifications...");
+
+		// Manifest override
+		boolean changedManifest = false;
+		for (PatchEntry entry : patches) {
+			// Skip collections
+			if (entry.type == PatchEntryType.COLLECTION)
+				continue;
+
+			// Check
+			InputStream fIn = null;
+			ZipFile ar = null;
+			if (!entry.preExtracted) {
+				// Find entry
+				ar = new ZipFile(entry.file);
+				ZipEntry ent = ar.getEntry("AndroidManifest.xml");
+				if (ent != null) {
+					fIn = ar.getInputStream(ent);
+				}
+				ar.close();
+			} else {
+				// Find entry
+				File ent = new File(entry.file, "AndroidManifest.xml");
+				if (ent.exists()) {
+					fIn = new FileInputStream(ent);
+				}
+			}
+
+			// Check manifest
+			if (fIn != null) {
+				// Dump importing axml
+				try {
+					// Decode
+					Document doc = parseAXML(fIn);
+
+					// Pull API version
+					manifestRoot = doc.getDocumentElement();
+					sdkVersion = (Element) manifestRoot.getElementsByTagName("uses-sdk")
+							.item(0);
+					minSdk = sdkVersion.getAttribute("android:minSdkVersion");
+					targetSdk = sdkVersion.getAttribute("android:targetSdkVersion");
+
+					// Pull app info
+					pkg = manifestRoot.getAttribute("package");
+					appVerCode = manifestRoot.getAttribute("android:versionCode");
+					appVerName = manifestRoot.getAttribute("android:versionName");
+					changedManifest = true;
+				} catch (Exception e) {
+					// NO
+					// Library is unstable lets not crash
+				}
+
+				// Close
+				fIn.close();
+			}
+			if (ar != null)
+				ar.close();
+		}
+		if (changedManifest) {
+			ProgressWindow.WindowLogger.log("Loaded app manifest patch!");
+			ProgressWindow.WindowLogger.log(
+					"  Application: " + pkg + " " + appVerName + " (build " + appVerCode
+							+ ")");
+			ProgressWindow.WindowLogger
+					.log("  Target SDK: " + targetSdk + ", minimal SDK: " + minSdk);
+		}
+
+		// Extract
 		ProgressWindow.WindowLogger.log("Extracting mod resources...");
 		ArrayList<String> dexesInjected = new ArrayList<String>();
 		HashMap<String, ArrayList<String>> modClassBundles = new HashMap<String, ArrayList<String>>();
@@ -644,6 +711,42 @@ public class MainWindow {
 							archive.getInputStream(ent).transferTo(strm);
 							strm.close();
 							modFiles.remove(ent.getName());
+
+							// Check if META-INF/versions
+							String className = output.substring(output.indexOf("/") + 1);
+							if (className.startsWith("META-INF/versions/")) {
+								// Get version
+								String ver = className.substring("META-INF/versions/".length());
+								ver = ver.substring(0, ver.indexOf("/"));
+								if (ver.matches("^[0-9]+$")) {
+									// Java version
+									int jvmVersion = Integer.parseInt(ver);
+
+									// Check
+									int api = Integer.parseInt(minSdk);
+									int maxJvmVer = getMaxJvmVer(api);
+									if (jvmVersion > maxJvmVer) {
+										// Skip
+
+										// Incompatible
+										fList.remove(output);
+										outp.delete();
+									}
+								}
+							}
+
+							// Check node
+							if (outp.exists() && !checkClassVersion(entry.file, output.substring(output.indexOf("/") + 1),
+									Integer.parseInt(minSdk))) {
+								// Incompatible
+								fList.remove(output);
+								outp.delete();
+
+								// Warn
+								ProgressWindow.WindowLogger.log("    [WARN] Skipping class symbol " + output
+										+ ": incompatible with current API version.");
+							}
+
 						} else {
 							InputStream inp = archive.getInputStream(ent);
 							handlePatchResourceFile(out, ent.getName(), inp);
@@ -688,7 +791,7 @@ public class MainWindow {
 				// Copy
 				File out = new File("lightray-work/mods");
 				copyPatchResources(entry.file, out, current, step, modFiles, "", 0, dexesInjected, modClassBundles,
-						entry);
+						entry, minSdk, pool);
 				ProgressWindow.WindowLogger.setValue(current + 100);
 
 				// Determine type
@@ -860,32 +963,6 @@ public class MainWindow {
 								FileInputStream inp = new FileInputStream(f);
 								Document doc = parseAXML(inp);
 								inp.close();
-
-								// Check if AndroidManifest.xml
-								String man = ent.getName().replace("\\", "/");
-								while (man.startsWith("/"))
-									man = man.substring(1);
-								if (man.equals("AndroidManifest.xml")) {
-									// Android manifest
-
-									// Pull API version
-									manifestRoot = doc.getDocumentElement();
-									sdkVersion = (Element) manifestRoot.getElementsByTagName("uses-sdk")
-											.item(0);
-									minSdk = sdkVersion.getAttribute("android:minSdkVersion");
-									targetSdk = sdkVersion.getAttribute("android:targetSdkVersion");
-
-									// Pull app info
-									pkg = manifestRoot.getAttribute("package");
-									appVerCode = manifestRoot.getAttribute("android:versionCode");
-									appVerName = manifestRoot.getAttribute("android:versionName");
-									ProgressWindow.WindowLogger.log("    Manifest overridden!");
-									ProgressWindow.WindowLogger.log(
-											"    Application: " + pkg + " " + appVerName + " (build " + appVerCode
-													+ ")");
-									ProgressWindow.WindowLogger
-											.log("    Target SDK: " + targetSdk + ", minimal SDK: " + minSdk);
-								}
 
 								// Dump
 								DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
@@ -1422,6 +1499,48 @@ public class MainWindow {
 		ProgressWindow.WindowLogger.setLabel("Modifications applied successfully!");
 	}
 
+	private static int getMaxJvmVer(int api) {
+		int maxJvmVer = 8; // Java 8
+		if (api >= 34) // API 34+ is java 17
+			maxJvmVer = 17;
+		else if (api >= 32) // API 32+ is java 11
+			maxJvmVer = 11;
+		return maxJvmVer;
+	}
+
+	private static int getMaxClassVer(int api) {
+		int maxClassVer = 52; // 52 = Java 8
+		if (api >= 34) // API 34+ is java 17
+			maxClassVer = 61; // 61 = java 17
+		else if (api >= 32) // API 32+ is java 11
+			maxClassVer = 55; // 55 = java 11
+		return maxClassVer;
+	}
+
+	private static boolean checkClassVersion(File entry, String name, int api) {
+		try {
+			FluidClassPool pool = FluidClassPool.createEmpty();
+			pool.addSource(entry);
+			try {
+				// Load class
+				ClassNode node = pool.getClassNode(name.substring(0, name.lastIndexOf(".class")).replace("/", "."));
+				int version = node.version;
+
+				// Check
+				int maxClassVer = getMaxClassVer(api);
+				if (version > maxClassVer)
+					return false;
+
+				// Compatible
+				return true;
+			} finally {
+				pool.close();
+			}
+		} catch (Exception e) {
+			return false;
+		}
+	}
+
 	private static void logAsyncFromStream(InputStream strm, String prefix) {
 		Thread th = new Thread(() -> {
 			PrependedBufferStream st = new PrependedBufferStream(strm);
@@ -1506,7 +1625,8 @@ public class MainWindow {
 
 	private static int copyPatchResources(File source, File outputRoot, int current, float step,
 			ArrayList<String> modFiles, String pref, int i, ArrayList<String> dexesInjected,
-			HashMap<String, ArrayList<String>> modClassBundles, PatchEntry entry)
+			HashMap<String, ArrayList<String>> modClassBundles, PatchEntry entry, String minSdk,
+			FluidClassPool pool)
 			throws IOException, TransformerException, ParserConfigurationException {
 		for (File f : source.listFiles()) {
 			String name = pref + f.getName() + (f.isDirectory() ? "/" : "");
@@ -1517,7 +1637,7 @@ public class MainWindow {
 				out.mkdirs();
 				ProgressWindow.WindowLogger.setValue(current + (int) (step * (float) i++));
 				i = copyPatchResources(f, outputRoot, current, step, modFiles, pref + f.getName() + "/", i,
-						dexesInjected, modClassBundles, entry);
+						dexesInjected, modClassBundles, entry, minSdk, pool);
 			} else {
 				if (name.endsWith(".class")) {
 					// Check if entry specifies a specific class target
@@ -1548,6 +1668,41 @@ public class MainWindow {
 					strm.close();
 					inp.close();
 					modFiles.remove(name);
+
+					// Check if META-INF/versions
+					String className = output.substring(output.indexOf("/") + 1);
+					if (className.startsWith("META-INF/versions/")) {
+						// Get version
+						String ver = className.substring("META-INF/versions/".length());
+						ver = ver.substring(0, ver.indexOf("/"));
+						if (ver.matches("^[0-9]+$")) {
+							// Java version
+							int jvmVersion = Integer.parseInt(ver);
+
+							// Check
+							int api = Integer.parseInt(minSdk);
+							int maxJvmVer = getMaxJvmVer(api);
+							if (jvmVersion > maxJvmVer) {
+								// Skip
+
+								// Incompatible
+								fList.remove(output);
+								outp.delete();
+							}
+						}
+					}
+
+					// Check node
+					if (outp.exists() && !checkClassVersion(entry.file, output.substring(output.indexOf("/") + 1),
+							Integer.parseInt(minSdk))) {
+						// Incompatible
+						fList.remove(output);
+						outp.delete();
+
+						// Warn
+						ProgressWindow.WindowLogger.log("    [WARN] Skipping class symbol " + output
+								+ ": incompatible with current API version.");
+					}
 				} else {
 					InputStream inp = new FileInputStream(f);
 					handlePatchResourceFile(out, name, inp);
