@@ -786,11 +786,11 @@ public class MainWindow {
 					ProgressWindow.WindowLogger.log("Cleaning transformer files from " + entry.name);
 					ZipInputStream strm = new ZipInputStream(new FileInputStream(entry.file));
 					pool.addSource(entry.file);
-					pool.importArchive(strm);
+					pool.importArchiveClasses(strm, true);
 					strm.close();
 
 					// Check classes
-					for (ClassNode node : pool.getLoadedClasses()) {
+					for (ClassNode node : pool.getLoadedClassNodes(true)) {
 						if (AnnotationInfo.isAnnotationPresent(FluidTransformer.class, node)) {
 							for (File dir : new File("lightray-work/mod-classes").listFiles(t -> t.isDirectory())) {
 								if (new File(dir, node.name + ".class").exists()) {
@@ -817,10 +817,10 @@ public class MainWindow {
 				if (entry.type == PatchEntryType.TRANSFORMER) {
 					ProgressWindow.WindowLogger.log("Cleaning transformer files from " + entry.name);
 					pool.addSource(entry.file);
-					pool.importAllSources();
+					pool.importAndReadAllSources();
 
 					// Check classes
-					for (ClassNode node : pool.getLoadedClasses()) {
+					for (ClassNode node : pool.getLoadedClassNodes(true)) {
 						if (AnnotationInfo.isAnnotationPresent(FluidTransformer.class, node)) {
 							for (File dir : new File("lightray-work/mod-classes").listFiles(t -> t.isDirectory())) {
 								if (new File(dir, node.name + ".class").exists()) {
@@ -2083,11 +2083,11 @@ public class MainWindow {
 				FluidClassPool pool = FluidClassPool.createEmpty();
 				try {
 					ZipInputStream strm = new ZipInputStream(new FileInputStream(mod));
-					pool.importArchive(strm);
+					pool.importArchiveClasses(strm, true);
 					strm.close();
 
 					// Check classes
-					for (ClassNode node : pool.getLoadedClasses()) {
+					for (ClassNode node : pool.getLoadedClassNodes(true)) {
 						if (AnnotationInfo.isAnnotationPresent(FluidTransformer.class, node)) {
 							patch.type = PatchEntryType.TRANSFORMER;
 						} else if (AnnotationInfo.isAnnotationPresent(LightrayPatcher.class, node)) {
@@ -2101,7 +2101,7 @@ public class MainWindow {
 						// Load patcher classes
 						dynLoader.addUrl(mod.toURI().toURL());
 						patchers.put(patch.name, new ArrayList<ILightrayPatcher>());
-						for (ClassNode node : pool.getLoadedClasses()) {
+						for (ClassNode node : pool.getLoadedClassNodes(true)) {
 							if (AnnotationInfo.isAnnotationPresent(LightrayPatcher.class, node)) {
 								// Load patcher
 								Class<?> cls = dynLoader.loadClass(node.name.replace("/", "."));
@@ -2167,10 +2167,10 @@ public class MainWindow {
 			try {
 				// Import
 				pool.addSource(mod);
-				pool.importAllSources();
+				pool.importAndReadAllSources();
 
 				// Check classes
-				for (ClassNode node : pool.getLoadedClasses()) {
+				for (ClassNode node : pool.getLoadedClassNodes(true)) {
 					if (AnnotationInfo.isAnnotationPresent(FluidTransformer.class, node)) {
 						patch.type = PatchEntryType.TRANSFORMER;
 					} else if (AnnotationInfo.isAnnotationPresent(LightrayPatcher.class, node)) {
@@ -2184,7 +2184,7 @@ public class MainWindow {
 					// Load patcher classes
 					dynLoader.addUrl(mod.toURI().toURL());
 					patchers.put(patch.name, new ArrayList<ILightrayPatcher>());
-					for (ClassNode node : pool.getLoadedClasses()) {
+					for (ClassNode node : pool.getLoadedClassNodes(true)) {
 						if (AnnotationInfo.isAnnotationPresent(LightrayPatcher.class, node)) {
 							// Load patcher
 							Class<?> cls = dynLoader.loadClass(node.name.replace("/", "."));

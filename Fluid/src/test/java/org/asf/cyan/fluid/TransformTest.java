@@ -12,7 +12,7 @@ public class TransformTest {
 		// Init
 		Fluid.openFluidLoader();
 		FluidClassPool pool = FluidClassPool.create();
-		pool.importAllSources();
+		pool.importAndReadAllSources();
 		Fluid.registerAllTransformersFrom(pool);
 		Fluid.closeFluidLoader();
 		Transformers.initialize();

@@ -73,7 +73,7 @@ public class FileClassSourceProvider implements IClassSourceProvider<File> {
 	}
 
 	@Override
-	public void importAll(FluidClassPool pool) {
+	public void importAllRead(FluidClassPool pool) {
 		if (isZipLike()) {
 			InputStream strm;
 			try {
@@ -85,7 +85,7 @@ public class FileClassSourceProvider implements IClassSourceProvider<File> {
 				ZipInputStream zip = new ZipInputStream(strm);
 				try {
 					// Import
-					pool.importArchive(zip);
+					pool.importArchiveClasses(zip, true);
 				} finally {
 					zip.close();
 				}
@@ -100,24 +100,62 @@ public class FileClassSourceProvider implements IClassSourceProvider<File> {
 			}
 		} else if (file.isDirectory()) {
 			// Scan folder
-			importFromFolder(file, pool, "");
+			importFromFolder(file, pool, "", true);
 		}
 	}
 
-	private void importFromFolder(File dir, FluidClassPool pool, String pref) {
+	@Override
+	public void importAllFind(FluidClassPool pool) {
+		if (isZipLike()) {
+			InputStream strm;
+			try {
+				strm = new FileInputStream(file);
+			} catch (FileNotFoundException e1) {
+				return;
+			}
+			try {
+				ZipInputStream zip = new ZipInputStream(strm);
+				try {
+					// Import
+					pool.importArchiveClasses(zip, false);
+				} finally {
+					zip.close();
+				}
+			} catch (Exception e) {
+				// Invalid archive
+			} finally {
+				// Close stream
+				try {
+					strm.close();
+				} catch (IOException e) {
+				}
+			}
+		} else if (file.isDirectory()) {
+			// Scan folder
+			importFromFolder(file, pool, "", false);
+		}
+	}
+
+	private void importFromFolder(File dir, FluidClassPool pool, String pref, boolean read) {
 		if (!dir.exists())
 			return;
 		for (File f : dir.listFiles()) {
 			if (f.isDirectory()) {
 				// Import subdirs
-				importFromFolder(f, pool, pref + f.getName() + ".");
+				importFromFolder(f, pool, pref + f.getName() + ".", read);
 			} else if (f.getName().endsWith(".class")) {
 				// Try import
-				try {
-					InputStream strm = new FileInputStream(f);
-					pool.readClass(pref + f.getName().substring(0, f.getName().lastIndexOf(".class")), strm);
-					strm.close();
-				} catch (IOException e) {
+				if (read) {
+					// Read
+					try {
+						InputStream strm = new FileInputStream(f);
+						pool.readClass(pref + f.getName().substring(0, f.getName().lastIndexOf(".class")), strm);
+						strm.close();
+					} catch (IOException e) {
+					}
+				} else {
+					// Add
+					pool.addKnownClass(pref + f.getName().substring(0, f.getName().lastIndexOf(".class")));
 				}
 			}
 		}

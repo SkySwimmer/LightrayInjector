@@ -175,7 +175,7 @@ public class Fluid {
 		}
 		if (type == "")
 			return "";
-		return prefix + "L" + type.replaceAll("\\.", "/") + ";";
+		return prefix + "L" + type.replace(".", "/") + ";";
 	}
 
 	/**
@@ -647,7 +647,7 @@ public class Fluid {
 					ClassNode cls = dat.cls;
 
 					DeobfuscationTarget target = new DeobfuscationTarget();
-					target.jvmName = clsMapping.name.replaceAll("\\.", "/");
+					target.jvmName = clsMapping.name.replace(".", "/");
 					target.outputName = clsMapping.name;
 
 					for (MethodNode method : cls.methods) {
@@ -693,7 +693,7 @@ public class Fluid {
 					}
 
 					if (cls.superName != null
-							&& !cls.superName.equals(Object.class.getTypeName().replaceAll("\\.", "/"))) {
+							&& !cls.superName.equals(Object.class.getTypeName().replace(".", "/"))) {
 						try {
 							mapSuperAndInterfaces(root, mp, target, pool.getClassNode(cls.superName), pool);
 						} catch (ClassNotFoundException e) {
@@ -706,7 +706,7 @@ public class Fluid {
 						}
 					}
 
-					mp.put(clsMapping.obfuscated.replaceAll("\\.", "/"), target);
+					mp.put(clsMapping.obfuscated.replace(".", "/"), target);
 				}, "FLUID Mapper Thread #" + thc++);
 				threadInstances[thc - 2] = th;
 				th.setDaemon(true);
@@ -929,7 +929,7 @@ public class Fluid {
 					}
 				}
 
-				if (cls.superName != null && !cls.superName.equals(Object.class.getTypeName().replaceAll("\\.", "/"))) {
+				if (cls.superName != null && !cls.superName.equals(Object.class.getTypeName().replace(".", "/"))) {
 					try {
 						mapSuperAndInterfaces(root, mp, target, pool.getClassNode(cls.superName), pool);
 					} catch (ClassNotFoundException e) {
@@ -1001,7 +1001,7 @@ public class Fluid {
 			}
 		}
 
-		cls.name = clsMapping.name.replaceAll("\\.", "/");
+		cls.name = clsMapping.name.replace(".", "/");
 
 		log.trace("DEOBFUSCATED " + clsMapping.name + ", remapping required for name change");
 	}
@@ -1133,7 +1133,7 @@ public class Fluid {
 					"Cannot register transformers after FLUID has been closed or before it has been opened!");
 
 		// Scan pool
-		for (ClassNode node : pool.getLoadedClasses()) {
+		for (ClassNode node : pool.getLoadedClassNodes(true)) {
 			// Check annotation
 			if (Transformer.AnnotationInfo.isAnnotationPresent(FluidTransformer.class, node)) {
 				// Load it

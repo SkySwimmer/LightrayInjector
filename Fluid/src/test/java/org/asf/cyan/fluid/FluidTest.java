@@ -52,7 +52,7 @@ public class FluidTest {
 			URI u = url.toURI();
 			byte[] byteCode = pool.getByteCode(map.name);
 			BufferedOutputStream strm = new BufferedOutputStream(
-					new FileOutputStream(new File(u.getPath(), map.name.replaceAll("\\.", "/") + ".class")));
+					new FileOutputStream(new File(u.getPath(), map.name.replace(".", "/") + ".class")));
 			strm.write(byteCode);
 			strm.flush();
 			strm.close();

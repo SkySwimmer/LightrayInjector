@@ -8,10 +8,11 @@ import java.net.MalformedURLException;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.Enumeration;
 import java.util.HashMap;
-import java.util.Optional;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -57,7 +58,9 @@ public class FluidClassPool implements Closeable {
 	}
 
 	private ArrayList<IClassSourceProvider<?>> sources = new ArrayList<IClassSourceProvider<?>>();
-	private ArrayList<ClassEntry> classes = new ArrayList<ClassEntry>();
+	private ArrayList<String> knownClassNames = new ArrayList<String>();
+	private HashMap<String, ClassEntry> classesLoaded = new HashMap<String, ClassEntry>();
+	private HashMap<String, ClassEntry> classesLoadedFN = new HashMap<String, ClassEntry>();
 	private HashMap<String, String> classHashes = new HashMap<String, String>();
 
 	private ArrayList<String> includedclasses = new ArrayList<String>();
@@ -86,11 +89,51 @@ public class FluidClassPool implements Closeable {
 	 * @param name Class name
 	 */
 	public void addIncludedClass(String name) {
+		name = name.replace(".", "/");
 		includedclasses.add(name);
 	}
 
-	public ClassNode[] getLoadedClasses() {
-		return classes.stream().map(t -> t.node).toArray(t -> new ClassNode[t]);
+	/**
+	 * Retrieves all loaded classes
+	 * 
+	 * @param loadUnloaded Controls if unloaded classes should be loaded
+	 * @return Array of ClassNode instances
+	 */
+	public ClassNode[] getLoadedClassNodes(boolean loadUnloaded) {
+		HashMap<String, ClassNode> classes = new HashMap<String, ClassNode>();
+		synchronized (classesLoaded) {
+			for (String name : classesLoaded.keySet()) {
+				classes.put(name, classesLoaded.get(name).node);
+			}
+		}
+		if (loadUnloaded) {
+			ArrayList<String> unloaded = new ArrayList<String>();
+			synchronized (knownClassNames) {
+				for (String name : knownClassNames) {
+					if (!classes.containsKey(name))
+						unloaded.add(name);
+				}
+			}
+			for (String name : unloaded) {
+				try {
+					ClassNode node = getClassNode(name);
+					classes.put(name, node);
+				} catch (ClassNotFoundException e) {
+				}
+			}
+		}
+		return classes.values().toArray(t -> new ClassNode[t]);
+	}
+
+	/**
+	 * Retrieves all loaded class names
+	 * 
+	 * @return Array of loaded class names names
+	 */
+	public String[] getLoadedClassNames() {
+		synchronized (knownClassNames) {
+			return knownClassNames.stream().map(t -> t.replace("/", ".")).toArray(t -> new String[t]);
+		}
 	}
 
 	/**
@@ -159,20 +202,22 @@ public class FluidClassPool implements Closeable {
 		boolean present = false;
 		ArrayList<IClassSourceProvider<?>> backupSources = new ArrayList<IClassSourceProvider<?>>(sources);
 		switch (provider.getComparisonMethod()) {
-		case OBJECT_EQUALS:
-			present = backupSources.stream().anyMatch(t -> t.getComparisonMethod() == ComparisonMethod.OBJECT_EQUALS
-					&& t.providerObject().equals(provider.providerObject()));
-		case CLASS_EQUALS:
-			present = backupSources.stream()
-					.anyMatch(t -> t.getComparisonMethod() == ComparisonMethod.CLASS_EQUALS && t.providerObject()
-							.getClass().getTypeName().equals(provider.providerObject().getClass().getTypeName()));
-		case CLASS_ISASSIGNABLE:
-			present = backupSources.stream()
-					.anyMatch(t -> t.getComparisonMethod() == ComparisonMethod.CLASS_ISASSIGNABLE
-							&& t.providerObject().getClass().isAssignableFrom(provider.providerObject().getClass()));
-		case LOGICAL_EQUALS:
-			present = backupSources.stream().anyMatch(t -> t.getComparisonMethod() == ComparisonMethod.LOGICAL_EQUALS
-					&& t.providerObject() == provider.providerObject());
+			case OBJECT_EQUALS:
+				present = backupSources.stream().anyMatch(t -> t.getComparisonMethod() == ComparisonMethod.OBJECT_EQUALS
+						&& t.providerObject().equals(provider.providerObject()));
+			case CLASS_EQUALS:
+				present = backupSources.stream()
+						.anyMatch(t -> t.getComparisonMethod() == ComparisonMethod.CLASS_EQUALS && t.providerObject()
+								.getClass().getTypeName().equals(provider.providerObject().getClass().getTypeName()));
+			case CLASS_ISASSIGNABLE:
+				present = backupSources.stream()
+						.anyMatch(t -> t.getComparisonMethod() == ComparisonMethod.CLASS_ISASSIGNABLE
+								&& t.providerObject().getClass()
+										.isAssignableFrom(provider.providerObject().getClass()));
+			case LOGICAL_EQUALS:
+				present = backupSources.stream()
+						.anyMatch(t -> t.getComparisonMethod() == ComparisonMethod.LOGICAL_EQUALS
+								&& t.providerObject() == provider.providerObject());
 		}
 
 		if (!present) {
@@ -189,28 +234,33 @@ public class FluidClassPool implements Closeable {
 	 *         found.
 	 */
 	public ClassNode readClass(String name, byte[] bytecode) {
-		name = name.replaceAll("\\.", "/");
-
-		ArrayList<ClassEntry> clsLstBackup = new ArrayList<ClassEntry>(classes);
-		for (ClassEntry cls : clsLstBackup) {
-			if (cls.node.name.equals(name)) {
-				return cls.node;
-			}
+		name = name.replace(".", "/");
+		synchronized (classesLoaded) {
+			if (classesLoaded.containsKey(name))
+				return classesLoaded.get(name).node;
 		}
-
 		ClassNode node = new ClassNode();
 		ClassReader reader = new ClassReader(bytecode);
 		reader.accept(node, 0);
-
 		fixLocalVariableNames(node);
 		removeNullable(node);
 		node.name = name;
-
 		ClassEntry entry = new ClassEntry();
 		entry.node = node;
 		entry.firstName = name.replace(".", "/");
-		classHashes.put(name, getHash(getByteCode(entry.node)));
-		classes.add(entry);
+		synchronized (classHashes) {
+			classHashes.put(name, getHash(getByteCode(entry.node)));
+		}
+		synchronized (classesLoaded) {
+			classesLoaded.put(name, entry);
+		}
+		synchronized (classesLoadedFN) {
+			classesLoadedFN.put(entry.firstName, entry);
+		}
+		synchronized (knownClassNames) {
+			if (!knownClassNames.contains(name))
+				knownClassNames.add(name);
+		}
 		return node;
 	}
 
@@ -221,20 +271,24 @@ public class FluidClassPool implements Closeable {
 	 * @param cls  Class node
 	 */
 	public ClassNode addClass(String name, ClassNode cls) {
-		name = name.replaceAll("\\.", "/");
-
-		ArrayList<ClassEntry> clsLstBackup = new ArrayList<ClassEntry>(classes);
-		for (ClassEntry cls2 : clsLstBackup) {
-			if (cls2.node.name.equals(name)) {
-				cls2.node = cls;
-				return cls2.node;
-			}
+		name = name.replace(".", "/");
+		synchronized (classesLoaded) {
+			if (classesLoaded.containsKey(name))
+				return classesLoaded.get(name).node;
 		}
-
 		ClassEntry entry = new ClassEntry();
 		entry.node = cls;
 		entry.firstName = name.replace(".", "/");
-		classes.add(entry);
+		synchronized (classesLoaded) {
+			classesLoaded.put(name, entry);
+		}
+		synchronized (classesLoadedFN) {
+			classesLoadedFN.put(entry.firstName, entry);
+		}
+		synchronized (knownClassNames) {
+			if (!knownClassNames.contains(name))
+				knownClassNames.add(name);
+		}
 		return cls;
 	}
 
@@ -248,12 +302,11 @@ public class FluidClassPool implements Closeable {
 	 * @throws IOException if the reading fails.
 	 */
 	public ClassNode readClass(String name, InputStream strm) throws IOException {
-		name = name.replaceAll("\\.", "/");
+		name = name.replace(".", "/");
 
-		ArrayList<ClassEntry> clsLstBackup = new ArrayList<ClassEntry>(classes);
-		for (ClassEntry cls : clsLstBackup) {
-			if (cls.node.name.equals(name))
-				return cls.node;
+		synchronized (classesLoaded) {
+			if (classesLoaded.containsKey(name))
+				return classesLoaded.get(name).node;
 		}
 
 		ClassNode node = new ClassNode();
@@ -267,7 +320,18 @@ public class FluidClassPool implements Closeable {
 		ClassEntry entry = new ClassEntry();
 		entry.node = node;
 		entry.firstName = name.replace(".", "/");
-		classes.add(entry);
+
+		synchronized (classesLoaded) {
+			classesLoaded.put(name, entry);
+		}
+		synchronized (classesLoadedFN) {
+			classesLoadedFN.put(entry.firstName, entry);
+		}
+		synchronized (knownClassNames) {
+			if (!knownClassNames.contains(name))
+				knownClassNames.add(name);
+		}
+
 		return node;
 	}
 
@@ -280,17 +344,15 @@ public class FluidClassPool implements Closeable {
 	 * @throws ClassNotFoundException if the class cannot be found.
 	 */
 	public ClassNode getClassNode(String name) throws ClassNotFoundException {
-		name = name.replaceAll("\\.", "/");
-		final String nameFinal = name;
+		name = name.replace(".", "/");
 
-		Optional<ClassEntry> oldN = new ArrayList<ClassEntry>(classes).stream()
-				.filter(t -> t.firstName.equals(nameFinal)).findFirst();
-		if (!oldN.isEmpty())
-			return oldN.get().node;
-
-		for (ClassEntry cls : new ArrayList<ClassEntry>(classes)) {
-			if (cls.node.name.equals(name))
-				return cls.node;
+		synchronized (classesLoadedFN) {
+			if (classesLoadedFN.containsKey(name))
+				return classesLoadedFN.get(name).node;
+		}
+		synchronized (classesLoaded) {
+			if (classesLoaded.containsKey(name))
+				return classesLoaded.get(name).node;
 		}
 
 		ArrayList<IClassSourceProvider<?>> backupProviders = new ArrayList<IClassSourceProvider<?>>(sources);
@@ -310,7 +372,17 @@ public class FluidClassPool implements Closeable {
 				ClassEntry entry = new ClassEntry();
 				entry.node = node;
 				entry.firstName = name.replace(".", "/");
-				classes.add(entry);
+
+				synchronized (classesLoaded) {
+					classesLoaded.put(name, entry);
+				}
+				synchronized (classesLoadedFN) {
+					classesLoadedFN.put(entry.firstName, entry);
+				}
+				synchronized (knownClassNames) {
+					if (!knownClassNames.contains(name))
+						knownClassNames.add(name);
+				}
 
 				return node;
 			} catch (IOException ex) {
@@ -326,11 +398,10 @@ public class FluidClassPool implements Closeable {
 	 * @return Byte array
 	 */
 	public byte[] getByteCode(String name) {
-		name = name.replaceAll("\\.", "/");
-		ArrayList<ClassEntry> clsLstBackup = new ArrayList<ClassEntry>(classes);
-		for (ClassEntry cls : clsLstBackup) {
-			if (cls.node.name.equals(name))
-				return getByteCode(cls.node);
+		name = name.replace(".", "/");
+		synchronized (classesLoaded) {
+			if (classesLoaded.containsKey(name))
+				return getByteCode(classesLoaded.get(name).node);
 		}
 		return null;
 	}
@@ -350,10 +421,25 @@ public class FluidClassPool implements Closeable {
 	/**
 	 * Imports all classes from all source providers
 	 */
-	public void importAllSources() {
+	public void importAndReadAllSources() {
 		// Load all sources
 		for (IClassSourceProvider<?> source : sources) {
-			source.importAll(this);
+			source.importAllRead(this);
+		}
+	}
+
+	/**
+	 * Imports all classes from all source providers
+	 * 
+	 * @param read True to enable file reading, false for only scanning class names
+	 */
+	public void importAndScanAllSources(boolean read) {
+		// Load all sources
+		for (IClassSourceProvider<?> source : sources) {
+			if (read)
+				source.importAllRead(this);
+			else
+				source.importAllFind(this);
 		}
 	}
 
@@ -361,25 +447,101 @@ public class FluidClassPool implements Closeable {
 	 * Imports classes into the pool from an archive, loading all classes of the
 	 * archive
 	 * 
-	 * @param strm Zip input stream
+	 * @param strm        Zip input stream
+	 * @param readClasses True to read classes, false to only load their names
 	 * @throws IOException If importing the archive fails
 	 */
-	public void importArchive(ZipInputStream strm) throws IOException {
+	public void importArchiveClasses(ZipInputStream strm, boolean readClasses) throws IOException {
 		ZipEntry entry = strm.getNextEntry();
 		while (entry != null) {
 			String path = entry.getName().replace("\\", "/");
 			if (path.endsWith(".class")) {
 				String name = path;
 				name = name.substring(0, name.lastIndexOf(".class"));
-
-				final String nameFinal = name;
-				if (!this.classes.stream()
-						.anyMatch(t -> t.node.name.equals(nameFinal) || t.firstName.equals(nameFinal))) {
-					if (includedclasses.size() == 0 || includedclasses.contains(nameFinal))
-						readClass(name, strm);
+				boolean found = false;
+				synchronized (classesLoadedFN) {
+					if (classesLoadedFN.containsKey(name))
+						found = true;
+				}
+				if (!found) {
+					synchronized (classesLoaded) {
+						if (classesLoaded.containsKey(name))
+							found = true;
+					}
+				}
+				if (!found) {
+					if (readClasses) {
+						if (includedclasses.size() == 0 || includedclasses.contains(name))
+							readClass(name, strm);
+					} else {
+						synchronized (knownClassNames) {
+							if (!knownClassNames.contains(name))
+								knownClassNames.add(name);
+						}
+					}
 				}
 			}
 			entry = strm.getNextEntry();
+		}
+	}
+
+	/**
+	 * Imports classes into the pool from an archive, loading all classes of the
+	 * archive
+	 * 
+	 * @param file        Zip archive
+	 * @param readClasses True to read classes, false to only load their names
+	 * @throws IOException If importing the archive fails
+	 */
+	public void importArchiveClasses(ZipFile file, boolean readClasses) throws IOException {
+		Enumeration<? extends ZipEntry> ents = file.entries();
+		ZipEntry entry = ents.nextElement();
+		while (entry != null) {
+			String path = entry.getName().replace("\\", "/");
+			if (path.endsWith(".class")) {
+				String name = path;
+				name = name.substring(0, name.lastIndexOf(".class"));
+				boolean found = false;
+				synchronized (classesLoadedFN) {
+					if (classesLoadedFN.containsKey(name))
+						found = true;
+				}
+				if (!found) {
+					synchronized (classesLoaded) {
+						if (classesLoaded.containsKey(name))
+							found = true;
+					}
+				}
+				if (!found) {
+					if (readClasses) {
+						if (includedclasses.size() == 0 || includedclasses.contains(name))
+							readClass(name, file.getInputStream(entry));
+					} else {
+						synchronized (knownClassNames) {
+							if (!knownClassNames.contains(name))
+								knownClassNames.add(name);
+						}
+					}
+				}
+			}
+			if (ents.hasMoreElements())
+				entry = ents.nextElement();
+			else
+				entry = null;
+		}
+	}
+
+	/**
+	 * Registers known classes
+	 * 
+	 * @param name Class name to register
+	 */
+	public void addKnownClass(String name) {
+		name = name.replace(".", "/");
+
+		synchronized (knownClassNames) {
+			if (!knownClassNames.contains(name))
+				knownClassNames.add(name);
 		}
 	}
 
@@ -390,13 +552,19 @@ public class FluidClassPool implements Closeable {
 	 * @throws ClassNotFoundException If the class cannot be found.
 	 */
 	public void detachClass(String name) throws ClassNotFoundException {
-		name = name.replaceAll("\\.", "/");
-		ArrayList<ClassEntry> clsLstBackup = new ArrayList<ClassEntry>(classes);
-		for (ClassEntry cls : clsLstBackup) {
-			if (cls.node.name.equals(name)) {
-				classes.remove(cls);
-				return;
+		name = name.replace(".", "/");
+		synchronized (classesLoaded) {
+			if (classesLoaded.containsKey(name)) {
+				ClassEntry ent = classesLoaded.remove(name);
+				synchronized (classesLoadedFN) {
+					if (classesLoadedFN.containsKey(ent.firstName))
+						classesLoadedFN.remove(ent.firstName);
+				}
 			}
+		}
+		synchronized (knownClassNames) {
+			if (knownClassNames.contains(name))
+				knownClassNames.remove(name);
 		}
 		throw new ClassNotFoundException("Could not find class " + name.replaceAll("/", "."));
 	}
@@ -405,7 +573,6 @@ public class FluidClassPool implements Closeable {
 		for (String path : System.getProperty("java.class.path").split(File.pathSeparator)) {
 			if (path.equals("."))
 				continue;
-
 			File f = new File(path);
 			this.addSource(f);
 		}
@@ -414,7 +581,9 @@ public class FluidClassPool implements Closeable {
 	@Override
 	public void close() throws IOException {
 		sources.clear();
-		classes.clear();
+		classesLoaded.clear();
+		knownClassNames.clear();
+		classesLoadedFN.clear();
 	}
 
 	// Re-generates the variable names if they have unusable names
@@ -449,24 +618,31 @@ public class FluidClassPool implements Closeable {
 	 * @throws ClassNotFoundException
 	 */
 	public ClassNode rewriteClass(String name, byte[] bytecode) throws ClassNotFoundException {
-		name = name.replaceAll("\\.", "/");
-		ArrayList<ClassEntry> clsLstBackup = new ArrayList<ClassEntry>(classes);
-		if (classHashes.containsKey(name) && classHashes.get(name).equals(getHash(bytecode))) {
-			for (ClassEntry cls : clsLstBackup) {
-				if (cls.node.name.equals(name)) {
-					return cls.node;
+		name = name.replace(".", "/");
+		String hash = getHash(bytecode);
+		synchronized (classesLoaded) {
+			synchronized (classHashes) {
+				if (classHashes.containsKey(name) && classHashes.get(name).equals(hash)) {
+					// Return
+					if (classesLoaded.containsKey(name))
+						return classesLoaded.get(name).node;
 				}
 			}
-		}
-		for (ClassEntry cls : clsLstBackup) {
-			if (cls.node.name.equals(name)) {
-				cls.node = new ClassNode();
-				ClassReader reader = new ClassReader(bytecode);
-				reader.accept(cls.node, 0);
-				fixLocalVariableNames(cls.node);
-				removeNullable(cls.node);
-				classHashes.put(name, getHash(getByteCode(cls.node)));
-				return cls.node;
+			if (classesLoaded.containsKey(name) || knownClassNames.contains(name)) {
+				ClassEntry cls = classesLoaded.get(name);
+				if (cls.node.name.equals(name)) {
+					cls.node = new ClassNode();
+					ClassReader reader = new ClassReader(bytecode);
+					reader.accept(cls.node, 0);
+					fixLocalVariableNames(cls.node);
+					removeNullable(cls.node);
+					classHashes.put(name, hash);
+					synchronized (knownClassNames) {
+						if (!knownClassNames.contains(name))
+							knownClassNames.add(name);
+					}
+					return cls.node;
+				}
 			}
 		}
 		throw new ClassNotFoundException("Could not find class " + name.replaceAll("/", "."));
@@ -593,17 +769,23 @@ public class FluidClassPool implements Closeable {
 	 * @throws IOException            If reading fails
 	 */
 	public ClassNode rewriteClass(String name, InputStream input) throws ClassNotFoundException, IOException {
-		name = name.replaceAll("\\.", "/");
-		ArrayList<ClassEntry> clsLstBackup = new ArrayList<ClassEntry>(classes);
-		for (ClassEntry cls : clsLstBackup) {
-			if (cls.node.name.equals(name)) {
-				cls.node = new ClassNode();
-				ClassReader reader = new ClassReader(input);
-				reader.accept(cls.node, 0);
-				fixLocalVariableNames(cls.node);
-				removeNullable(cls.node);
-				classHashes.put(name, getHash(getByteCode(cls.node)));
-				return cls.node;
+		name = name.replace(".", "/");
+		synchronized (classesLoaded) {
+			if (classesLoaded.containsKey(name) || knownClassNames.contains(name)) {
+				ClassEntry cls = classesLoaded.get(name);
+				if (cls.node.name.equals(name)) {
+					cls.node = new ClassNode();
+					ClassReader reader = new ClassReader(input);
+					reader.accept(cls.node, 0);
+					fixLocalVariableNames(cls.node);
+					removeNullable(cls.node);
+					classHashes.put(name, getHash(getByteCode(cls.node)));
+					synchronized (knownClassNames) {
+						if (!knownClassNames.contains(name))
+							knownClassNames.add(name);
+					}
+					return cls.node;
+				}
 			}
 		}
 		throw new ClassNotFoundException("Could not find class " + name.replaceAll("/", "."));

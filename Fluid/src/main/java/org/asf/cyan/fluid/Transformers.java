@@ -44,7 +44,7 @@ public class Transformers {
 		for (ClassLoadHook hook : Fluid.getHooks()) {
 			String target = Fluid.mapClass(hook.targetPath());
 			hook.build();
-			hook.intialize(target.replaceAll("\\.", "/"));
+			hook.intialize(target.replace(".", "/"));
 			hooks.add(hook);
 		}
 
@@ -65,10 +65,10 @@ public class Transformers {
 			}
 			if (target != null) {
 				target = Fluid.mapClass(target);
-				ArrayList<ClassNode> trs = transformers.getOrDefault(target.replaceAll("\\.", "/"),
+				ArrayList<ClassNode> trs = transformers.getOrDefault(target.replace(".", "/"),
 						new ArrayList<ClassNode>());
 				trs.add(transformerNode);
-				transformers.put(target.replaceAll("\\.", "/"), trs);
+				transformers.put(target.replace(".", "/"), trs);
 				transformerOwners.put(transformerNode.name, Fluid.getTransformerOwners()[index]);
 			}
 			index++;
@@ -132,7 +132,7 @@ public class Transformers {
 	 * @return True if transformers are defined, false otherwise
 	 */
 	public static boolean hasTransformers(String className) {
-		String classNameF = className.replaceAll("\\.", "/");
+		String classNameF = className.replace(".", "/");
 		boolean match = false;
 		boolean transformerMatch = false;
 		if (hooks.stream().anyMatch(t -> {
@@ -183,7 +183,7 @@ public class Transformers {
 	public static byte[] applyTransformers(String className, byte[] classfileBuffer, ClassLoader loader,
 			FluidClassPool pool, List<ClassLoadHook> hooks, Map<String, ArrayList<ClassNode>> transformers,
 			Map<String, String> transformerOwners) {
-		String classNameF = className.replaceAll("\\.", "/");
+		String classNameF = className.replace(".", "/");
 		boolean match = false;
 		boolean transformerMatch = false;
 		if (hooks.stream().anyMatch(t -> {

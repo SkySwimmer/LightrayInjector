@@ -372,7 +372,7 @@ public class DynamicClassLoader extends URLClassLoader {
 			return super.loadClass(name, resolve);
 		}
 
-		String path = name.replaceAll("\\.", "/") + ".class";
+		String path = name.replace(".", "/") + ".class";
 		for (URL u : getURLs()) {
 			try {
 				if (!u.toString().endsWith(".class")) {

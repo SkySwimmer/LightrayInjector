@@ -36,9 +36,16 @@ public interface IClassSourceProvider<T> {
 	public InputStream getStream(String classType);
 
 	/**
-	 * Used to import all classes
+	 * Used to import all classes (finding and reading classes)
 	 * 
 	 * @param pool Pool to import the classes in
 	 */
-	public void importAll(FluidClassPool pool);
+	public void importAllRead(FluidClassPool pool);
+
+	/**
+	 * Used to import all classes (finding classes only)
+	 * 
+	 * @param pool Pool to import the classes in
+	 */
+	public void importAllFind(FluidClassPool pool);
 }

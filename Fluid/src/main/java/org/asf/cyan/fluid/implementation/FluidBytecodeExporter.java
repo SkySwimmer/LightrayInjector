@@ -557,7 +557,7 @@ public class FluidBytecodeExporter extends BytecodeExporter {
 		result.append(" ");
 		result.append(cls.name.replaceAll("/", "."));
 
-		if (cls.superName != null && !cls.superName.equals(Object.class.getTypeName().replaceAll("\\.", "/"))) {
+		if (cls.superName != null && !cls.superName.equals(Object.class.getTypeName().replace(".", "/"))) {
 			result.append(" extends ");
 			result.append(cls.superName.replaceAll("/", "."));
 		}

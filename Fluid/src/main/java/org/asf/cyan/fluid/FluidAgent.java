@@ -116,6 +116,8 @@ public class FluidAgent {
 					Transformers.addClassSource(new LoaderClassSourceProvider(loader));
 				}
 
+				if (!Transformers.hasTransformers(className))
+					return classfileBuffer;
 				return Transformers.applyTransformers(className, classfileBuffer, loader);
 			}
 		});

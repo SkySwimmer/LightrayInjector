@@ -254,7 +254,7 @@ public abstract class Transformer {
 								String targetCls = clName;
 								if (targetData.get("targetOwner") != null) {
 									targetCls = targetData.get("targetOwner");
-									targetMethCls = Fluid.mapClass(targetCls).replaceAll("\\.", "/");
+									targetMethCls = Fluid.mapClass(targetCls).replace(".", "/");
 								}
 
 								String superName = targetCls;
@@ -288,7 +288,7 @@ public abstract class Transformer {
 									if (!found) {
 										superName = null;
 										if (clsT.superName != null && !clsT.superName
-												.equals(Object.class.getTypeName().replaceAll("\\.", "/"))) {
+												.equals(Object.class.getTypeName().replace(".", "/"))) {
 											superName = getDeobfName(clsT.superName.replaceAll("/", "."));
 											try {
 												clsT = ctx.programPool.getClassNode(clsT.superName);
@@ -391,7 +391,7 @@ public abstract class Transformer {
 							if (!found) {
 								superName = null;
 								if (clsT.superName != null
-										&& !clsT.superName.equals(Object.class.getTypeName().replaceAll("\\.", "/"))) {
+										&& !clsT.superName.equals(Object.class.getTypeName().replace(".", "/"))) {
 									superName = getDeobfName(clsT.superName.replaceAll("/", "."));
 									try {
 										clsT = ctx.programPool.getClassNode(clsT.superName);
@@ -892,7 +892,6 @@ public abstract class Transformer {
 		}
 
 		public static boolean isAnnotationPresent(Class<? extends Annotation> info, ClassNode cls) {
-
 			if (cls.visibleAnnotations != null) {
 				for (AnnotationNode anno : cls.visibleAnnotations) {
 					if (create(anno).name.replaceAll("/", ".").equals(info.getTypeName()))

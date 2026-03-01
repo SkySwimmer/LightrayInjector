@@ -46,7 +46,11 @@ public class LoaderClassSourceProvider implements IClassSourceProvider<ClassLoad
 	}
 
 	@Override
-	public void importAll(FluidClassPool pool) {
+	public void importAllRead(FluidClassPool pool) {
+	}
+
+	@Override
+	public void importAllFind(FluidClassPool pool) {
 	}
 
 }

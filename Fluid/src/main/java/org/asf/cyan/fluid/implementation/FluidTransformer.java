@@ -763,7 +763,7 @@ public class FluidTransformer extends Transformer {
 		if (cls.fields.stream().anyMatch(t -> t.name.equals(fname)))
 			return true;
 
-		if (cls.superName != null && !cls.superName.equals(Object.class.getTypeName().replaceAll("\\.", "/"))) {
+		if (cls.superName != null && !cls.superName.equals(Object.class.getTypeName().replace(".", "/"))) {
 			try {
 				if (checkField(fname, pool, pool.getClassNode(cls.superName)))
 					return true;
@@ -784,7 +784,7 @@ public class FluidTransformer extends Transformer {
 		if (cls.fields.stream().anyMatch(t -> t.name.equals(fname)))
 			return cls.fields.stream().filter(t -> t.name.equals(fname)).findFirst().get();
 
-		if (cls.superName != null && !cls.superName.equals(Object.class.getTypeName().replaceAll("\\.", "/"))) {
+		if (cls.superName != null && !cls.superName.equals(Object.class.getTypeName().replace(".", "/"))) {
 			try {
 				if (checkField(fname, pool, pool.getClassNode(cls.superName)))
 					return getField(fname, pool, pool.getClassNode(cls.superName));
@@ -1165,7 +1165,7 @@ public class FluidTransformer extends Transformer {
 						methName = outP;
 						break;
 					} else if (!found && iClsT.superName != null
-							&& !iClsT.superName.equals(Object.class.getTypeName().replaceAll("\\.", "/"))) {
+							&& !iClsT.superName.equals(Object.class.getTypeName().replace(".", "/"))) {
 						clsName = getDeobfName(iClsT.superName.replaceAll("/", "."));
 						try {
 							iClsT = pool.getClassNode(iClsT.superName);
@@ -1181,7 +1181,7 @@ public class FluidTransformer extends Transformer {
 					}
 				}
 				if (!found && clsT.superName != null
-						&& !clsT.superName.equals(Object.class.getTypeName().replaceAll("\\.", "/"))) {
+						&& !clsT.superName.equals(Object.class.getTypeName().replace(".", "/"))) {
 					if (!found) {
 						clsName = getDeobfName(clsT.superName.replaceAll("/", "."));
 						try {
@@ -1231,7 +1231,7 @@ public class FluidTransformer extends Transformer {
 	protected FluidMethodInfo applyFMI(FluidMethodInfo self, String owner, MethodInsnNode method) {
 		method.name = self.name;
 		method.desc = "(" + Fluid.getDescriptors(self.types) + ")" + Fluid.getDescriptor(self.returnType);
-		method.owner = owner.replaceAll("\\.", "/");
+		method.owner = owner.replace(".", "/");
 		return self;
 	}
 
@@ -1454,7 +1454,7 @@ public class FluidTransformer extends Transformer {
 			if (!found) {
 				superName = null;
 				if (clsT.superName != null
-						&& !clsT.superName.equals(Object.class.getTypeName().replaceAll("\\.", "/"))) {
+						&& !clsT.superName.equals(Object.class.getTypeName().replace(".", "/"))) {
 					superName = getDeobfName(clsT.superName.replaceAll("/", "."));
 					try {
 						clsT = pool.getClassNode(clsT.superName);
@@ -1507,7 +1507,7 @@ public class FluidTransformer extends Transformer {
 			if (!found) {
 				superName = null;
 				if (clsT.superName != null
-						&& !clsT.superName.equals(Object.class.getTypeName().replaceAll("\\.", "/"))) {
+						&& !clsT.superName.equals(Object.class.getTypeName().replace(".", "/"))) {
 					superName = getDeobfName(clsT.superName.replaceAll("/", "."));
 					try {
 						clsT = pool.getClassNode(clsT.superName);
@@ -1528,6 +1528,6 @@ public class FluidTransformer extends Transformer {
 		}
 
 		fnode.name = Fluid.mapProperty(superName, fnode.name);
-		fnode.owner = Fluid.mapClass(superName).replaceAll("\\.", "/");
+		fnode.owner = Fluid.mapClass(superName).replace(".", "/");
 	}
 }
