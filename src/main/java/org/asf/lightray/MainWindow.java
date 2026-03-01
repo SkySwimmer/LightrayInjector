@@ -499,8 +499,8 @@ public class MainWindow {
 
 		// Download build tools
 		int apiMinD8 = Integer.parseInt(targetSdk);
-		if (apiMinD8 < 28)
-			apiMinD8 = 28;
+		if (apiMinD8 < 31)
+			apiMinD8 = 31;
 		if (!new File("buildtools/complete-" + apiMinD8).exists()) {
 			if (new File("buildtools").exists())
 				deleteDir(new File("buildtools"));
